@@ -30,7 +30,7 @@ const INITIAL_ROUND = {
   diagnostico: "",
 };
 
-// ── Funções de data ───────────────────────────────────────────────────────────
+// ── Helpers de data ───────────────────────────────────────────────────────────
 function calcIdade(dataNasc) {
   if (!dataNasc) return null;
   const hoje = new Date();
@@ -40,7 +40,6 @@ function calcIdade(dataNasc) {
   if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--;
   return idade;
 }
-
 function calcDias(dataAdm) {
   if (!dataAdm) return 0;
   const hoje = new Date();
@@ -48,7 +47,6 @@ function calcDias(dataAdm) {
   const diff = Math.floor((hoje - adm) / (1000 * 60 * 60 * 24));
   return diff >= 0 ? diff : 0;
 }
-
 function hoje() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -62,7 +60,7 @@ const gravBadge = (g) => ({
 
 function computeAlerts(round, pat) {
   const a = [];
-  if (!round) return a;
+  if (!round || !pat.nome) return a;
   if (round.tev === "Não") a.push("Sem profilaxia TEV");
   if (round.suporteResp === "VM invasiva" && !(round.planoDesmame?.length)) a.push("VM sem plano de desmame");
   if (round.dva === "Sim" && !round.pam) a.push("DVA sem meta PAM");
@@ -72,38 +70,36 @@ function computeAlerts(round, pat) {
   return a;
 }
 
-// ── Exportar Excel completo ───────────────────────────────────────────────────
+// ── Exportar Excel ────────────────────────────────────────────────────────────
 function exportExcel(patients, rounds) {
   const rows = patients.filter(p => p.nome);
+  if (!rows.length) { alert("Nenhum paciente para exportar."); return; }
   const data = rows.map(p => {
-    const r = rounds[p.id] || {};
+    const r   = rounds[p.id] || {};
     const dev = r.dispositivos || INITIAL_ROUND.dispositivos;
-    const alerts = computeAlerts(r, p);
-    const idade = calcIdade(p.dataNasc);
-    const dias  = calcDias(p.dataAdm);
     return {
       "Leito": p.leito,
       "Paciente": p.nome,
       "Data de Nascimento": p.dataNasc || "",
-      "Idade (anos)": idade ?? "",
+      "Idade (anos)": calcIdade(p.dataNasc) ?? "",
       "Data de Admissão": p.dataAdm || "",
-      "Dias Internado": dias,
+      "Dias Internado": calcDias(p.dataAdm),
       "Gravidade": p.gravidade,
       "Diagnóstico": r.diagnostico || p.diagnostico || "",
       "Precaução de Contato": r.contato || "",
       "Visita Flexibilizada": r.visitaFlex || "",
-      "Meta de Sedação (RASS)": r.rass || "",
+      "Meta Sedação RASS": r.rass || "",
       "Controle de Dor": r.dor || "",
       "Delirium": r.delirium || "",
       "Contenção Mecânica": r.contencao || "",
-      "DVA / Suporte Hemodinâmico": r.dva || "",
-      "Meta de PAM (mmHg)": r.pam || "",
+      "DVA": r.dva || "",
+      "Meta PAM (mmHg)": r.pam || "",
       "Suporte Respiratório": r.suporteResp || "",
       "VM Protetora": r.vmProtetora || "",
       "Plano de Desmame": (r.planoDesmame || []).join(" | "),
-      "Preocupações Respiratórias": (r.preocResp || []).join(" | "),
+      "Preocupações Resp.": (r.preocResp || []).join(" | "),
       "Escala IMS": r.ims || "",
-      "Progredir Nível Funcional": r.progredirFuncional || "",
+      "Progredir Funcional": r.progredirFuncional || "",
       "Via Alimentar": r.viaAlimentar || "",
       "Aceitação": r.aceitacao || "",
       "Meta Calórica": r.metaCalorica || "",
@@ -111,9 +107,9 @@ function exportExcel(patients, rounds) {
       "Controle Glicêmico": r.glicemia || "",
       "Evacuação < 3 dias": r.evacuacao || "",
       "Função Renal em Piora": r.funcaoRenal || "",
-      "Meta de Balanço Hídrico": r.metaBH || "",
+      "Meta Balanço Hídrico": r.metaBH || "",
       "Piora Infecciosa": r.pioraInfec || "",
-      "Em Uso de ATB": r.atb || "",
+      "ATB": r.atb || "",
       "Profilaxia TEV": r.tev || "",
       "Profilaxia LAMG": r.lamg || "",
       "Úlcera de Córnea": r.cornea || "",
@@ -121,31 +117,24 @@ function exportExcel(patients, rounds) {
       "Decúbito Elevado": r.decubito || "",
       "Bundles OK": r.bundles || "",
       "Bundle Pendente": r.bundlesPendente || "",
-      "Mudança de Decúbito": r.mudancaDecubito || "",
+      "Mudança Decúbito": r.mudancaDecubito || "",
       "Lesão por Pressão": r.lesaoPressao || "",
       "Avaliação Especializada": r.avalEspecializada || "",
-      "CVC — Data":              dev.cvc?.data || "",
-      "CVC — Desinvadir":        dev.cvc?.desinvadir ? "Sim" : "Não",
-      "Cateter HD — Data":       dev.hd?.data || "",
-      "Cateter HD — Desinvadir": dev.hd?.desinvadir ? "Sim" : "Não",
-      "SVD — Data":              dev.svd?.data || "",
-      "SVD — Desinvadir":        dev.svd?.desinvadir ? "Sim" : "Não",
-      "Cateter Arterial — Data":      dev.arterial?.data || "",
-      "Cateter Arterial — Desinvadir":dev.arterial?.desinvadir ? "Sim" : "Não",
-      "Sonda Enteral — Data":         dev.sondaEnteral?.data || "",
-      "Sonda Enteral — Desinvadir":   dev.sondaEnteral?.desinvadir ? "Sim" : "Não",
-      "Drenos — Data":           dev.drenos?.data || "",
-      "Drenos — Desinvadir":     dev.drenos?.desinvadir ? "Sim" : "Não",
-      "Diretivas de Cuidado":    (r.diretivas || []).join(" | "),
-      "Pendência Exame/Procedimento": r.pendenciaExame || "",
-      "Descrição da Pendência":  r.descPendencia || "",
-      "Previsão de Alta":        r.previsaoAlta || "",
-      "Alertas":                 alerts.join(" | "),
+      "CVC Data": dev.cvc?.data || "",           "CVC Desinvadir": dev.cvc?.desinvadir ? "Sim" : "Não",
+      "HD Data": dev.hd?.data || "",             "HD Desinvadir": dev.hd?.desinvadir ? "Sim" : "Não",
+      "SVD Data": dev.svd?.data || "",           "SVD Desinvadir": dev.svd?.desinvadir ? "Sim" : "Não",
+      "Art. Data": dev.arterial?.data || "",     "Art. Desinvadir": dev.arterial?.desinvadir ? "Sim" : "Não",
+      "SNE Data": dev.sondaEnteral?.data || "",  "SNE Desinvadir": dev.sondaEnteral?.desinvadir ? "Sim" : "Não",
+      "Dreno Data": dev.drenos?.data || "",      "Dreno Desinvadir": dev.drenos?.desinvadir ? "Sim" : "Não",
+      "Diretivas": (r.diretivas || []).join(" | "),
+      "Pendência Exame": r.pendenciaExame || "",
+      "Descrição Pendência": r.descPendencia || "",
+      "Previsão Alta": r.previsaoAlta || "",
+      "Alertas": computeAlerts(r, p).join(" | "),
     };
   });
-
   const ws = XLSX.utils.json_to_sheet(data);
-  ws["!cols"] = Object.keys(data[0] || {}).map(() => ({ wch: 22 }));
+  ws["!cols"] = Object.keys(data[0]).map(() => ({ wch: 20 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Round UTI");
   XLSX.writeFile(wb, `round-uti-${hoje()}.xlsx`);
@@ -191,9 +180,9 @@ function Field({ label, children }) {
     </div>
   );
 }
-function TInput({ value, onChange, placeholder, w, type = "text" }) {
+function TInput({ value, onChange, placeholder, w }) {
   return (
-    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{
+    <input value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{
       border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 12px",
       fontSize: 13, color: COLORS.navy, outline: "none", background: "#fff",
       width: w || "100%", maxWidth: w || 240, boxSizing: "border-box",
@@ -202,7 +191,7 @@ function TInput({ value, onChange, placeholder, w, type = "text" }) {
 }
 function TArea({ value, onChange, placeholder, rows = 2 }) {
   return (
-    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} style={{
+    <textarea value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} style={{
       border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px",
       fontSize: 13, color: COLORS.navy, outline: "none", width: "100%",
       resize: "vertical", background: "#fff", fontFamily: "inherit", boxSizing: "border-box",
@@ -212,14 +201,13 @@ function TArea({ value, onChange, placeholder, rows = 2 }) {
 
 // ── Modal editar paciente ─────────────────────────────────────────────────────
 function EditPatientModal({ pat, onSave, onClear, onClose }) {
-  const [nome,     setNome]    = useState(pat.nome || "");
-  const [dataNasc, setNasc]   = useState(pat.dataNasc || "");
-  const [dataAdm,  setAdm]    = useState(pat.dataAdm || "");
-  const [diag,     setDiag]   = useState(pat.diagnostico || "");
-  const [grav,     setGrav]   = useState(pat.gravidade || "livre");
-  const [confirm,  setConfirm]= useState(false);
+  const [nome,    setNome]    = useState(pat.nome || "");
+  const [dataNasc,setNasc]   = useState(pat.dataNasc || "");
+  const [dataAdm, setAdm]    = useState(pat.dataAdm || "");
+  const [diag,    setDiag]   = useState(pat.diagnostico || "");
+  const [grav,    setGrav]   = useState(pat.gravidade || "livre");
+  const [confirm, setConfirm]= useState(false);
   const canSave = nome.trim().length > 0;
-
   const idadeCalc = calcIdade(dataNasc);
   const diasCalc  = calcDias(dataAdm);
 
@@ -235,14 +223,11 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Nome */}
           <div>
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Nome completo *</div>
             <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome do paciente"
               style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
           </div>
-
-          {/* Datas */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Data de nascimento</div>
@@ -257,15 +242,11 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
               {dataAdm && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {diasCalc} dia(s) internado</div>}
             </div>
           </div>
-
-          {/* Diagnóstico */}
           <div>
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Diagnóstico principal</div>
             <input value={diag} onChange={e => setDiag(e.target.value)} placeholder="Ex: Sepse pulmonar"
               style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
           </div>
-
-          {/* Gravidade */}
           <div>
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Gravidade</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -276,7 +257,6 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
           </div>
         </div>
 
-        {/* Limpar */}
         {pat.nome && (
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
             {!confirm ? (
@@ -315,7 +295,7 @@ function ClearAllModal({ onConfirm, onClose }) {
       <div style={{ background: "#fff", borderRadius: 16, padding: "32px", width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,.25)", textAlign: "center" }}>
         <div style={{ fontSize: 48, marginBottom: 12 }}>🗑️</div>
         <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.navy, marginBottom: 8 }}>Limpar todos os pacientes?</div>
-        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24 }}>Todos os dados e rounds preenchidos serão apagados permanentemente.</div>
+        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24 }}>Todos os dados e rounds serão apagados permanentemente.</div>
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
           <button onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 10, border: "none", background: COLORS.danger, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Sim, limpar tudo</button>
@@ -334,18 +314,27 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
   const dias  = calcDias(pat.dataAdm);
 
   return (
-    <div style={{ background: COLORS.card, borderRadius: 14, border: `1.5px solid ${isEmpty ? COLORS.border : color + "44"}`, padding: "14px 16px", position: "relative", overflow: "hidden", boxShadow: "0 2px 8px rgba(11,37,69,.06)" }}>
+    <div style={{
+      background: COLORS.card, borderRadius: 14,
+      border: `1.5px solid ${isEmpty ? COLORS.border : color + "44"}`,
+      padding: "14px 16px", position: "relative", overflow: "hidden",
+      boxShadow: "0 2px 8px rgba(11,37,69,.06)",
+    }}>
       {!isEmpty && <div style={{ position: "absolute", top: 0, left: 0, width: 4, height: "100%", background: color, borderRadius: "14px 0 0 14px" }} />}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginLeft: isEmpty ? 0 : 8 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, letterSpacing: ".5px" }}>{pat.leito}</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {!isEmpty && <span style={{ fontSize: 11, color, fontWeight: 600, background: color + "18", padding: "2px 8px", borderRadius: 10 }}>{label}</span>}
-          <button onClick={e => { e.stopPropagation(); onEdit(pat.id); }} title={isEmpty ? "Admitir paciente" : "Editar paciente"}
+          <button
+            onClick={e => { e.stopPropagation(); onEdit(pat.id); }}
+            title={isEmpty ? "Admitir paciente" : "Editar paciente"}
             style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "2px 7px", cursor: "pointer", fontSize: 12, color: COLORS.muted }}>
             {isEmpty ? "＋" : "✏️"}
           </button>
         </div>
       </div>
+
       {isEmpty ? (
         <div onClick={() => onEdit(pat.id)} style={{ marginTop: 10, cursor: "pointer" }}>
           <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: 4 }}>Leito disponível</div>
@@ -500,10 +489,10 @@ function RoundForm({ pat, round, onChange, onBack }) {
             <div key={key} style={{ background: COLORS.lightBg, borderRadius: 10, padding: "12px 14px", border: `1px solid ${COLORS.border}` }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy, marginBottom: 8 }}>{lbl}</div>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <input type="date" value={r.dispositivos[key].data} onChange={e => setDev(key, "data", e.target.value)}
+                <input type="date" value={r.dispositivos[key]?.data || ""} onChange={e => setDev(key, "data", e.target.value)}
                   style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 8px", fontSize: 12, color: COLORS.navy, background: "#fff" }} />
                 <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: COLORS.teal, fontWeight: 600, cursor: "pointer" }}>
-                  <input type="checkbox" checked={r.dispositivos[key].desinvadir} onChange={e => setDev(key, "desinvadir", e.target.checked)} />
+                  <input type="checkbox" checked={r.dispositivos[key]?.desinvadir || false} onChange={e => setDev(key, "desinvadir", e.target.checked)} />
                   Desinvadir?
                 </label>
               </div>
@@ -543,32 +532,35 @@ function ReportModal({ patients, rounds, onClose }) {
           <div style={{ fontWeight: 800, fontSize: 20, color: COLORS.navy }}>📊 Resumo Geral da UTI</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr style={{ background: COLORS.navy, color: "#fff" }}>
-              {["Leito", "Paciente", "Idade", "Dias", "Diagnóstico", "VM", "DVA", "ATB", "Alta", "Pendências", "Alertas"].map(h => (
-                <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
-              ))}
-            </tr></thead>
-            <tbody>{rows.map((p, i) => {
-              const r = rounds[p.id]; const alerts = computeAlerts(r, p);
-              const idade = calcIdade(p.dataNasc); const dias = calcDias(p.dataAdm);
-              return <tr key={p.id} style={{ background: i % 2 === 0 ? "#fff" : COLORS.lightBg }}>
-                <td style={{ padding: "9px 12px", fontWeight: 700, color: COLORS.navy }}>{p.leito}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{p.nome}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{idade ?? "-"}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{dias}d</td>
-                <td style={{ padding: "9px 12px", color: COLORS.muted }}>{r?.diagnostico || p.diagnostico}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}><span style={{ color: r?.suporteResp === "VM invasiva" ? COLORS.danger : COLORS.success, fontWeight: 700 }}>{r?.suporteResp === "VM invasiva" ? "Sim" : "Não"}</span></td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}><span style={{ color: r?.dva === "Sim" ? COLORS.danger : COLORS.success, fontWeight: 700 }}>{r?.dva || "-"}</span></td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{r?.atb || "-"}</td>
-                <td style={{ padding: "9px 12px" }}>{r?.previsaoAlta || "-"}</td>
-                <td style={{ padding: "9px 12px", color: COLORS.warn, maxWidth: 160 }}>{r?.descPendencia || "-"}</td>
-                <td style={{ padding: "9px 12px" }}>{alerts.map((a, j) => <div key={j} style={{ color: COLORS.danger, fontSize: 11, fontWeight: 600 }}>⚠ {a}</div>)}</td>
-              </tr>;
-            })}</tbody>
-          </table>
-        </div>
+        {rows.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px", color: COLORS.muted }}>Nenhum paciente admitido.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ background: COLORS.navy, color: "#fff" }}>
+                {["Leito", "Paciente", "Idade", "Dias", "Diagnóstico", "VM", "DVA", "ATB", "Alta", "Pendências", "Alertas"].map(h => (
+                  <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>{rows.map((p, i) => {
+                const r = rounds[p.id]; const alerts = computeAlerts(r, p);
+                return <tr key={p.id} style={{ background: i % 2 === 0 ? "#fff" : COLORS.lightBg }}>
+                  <td style={{ padding: "9px 12px", fontWeight: 700, color: COLORS.navy }}>{p.leito}</td>
+                  <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{p.nome}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{calcIdade(p.dataNasc) ?? "-"}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{calcDias(p.dataAdm)}d</td>
+                  <td style={{ padding: "9px 12px", color: COLORS.muted }}>{r?.diagnostico || p.diagnostico}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}><span style={{ color: r?.suporteResp === "VM invasiva" ? COLORS.danger : COLORS.success, fontWeight: 700 }}>{r?.suporteResp === "VM invasiva" ? "Sim" : "Não"}</span></td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}><span style={{ color: r?.dva === "Sim" ? COLORS.danger : COLORS.success, fontWeight: 700 }}>{r?.dva || "-"}</span></td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r?.atb || "-"}</td>
+                  <td style={{ padding: "9px 12px" }}>{r?.previsaoAlta || "-"}</td>
+                  <td style={{ padding: "9px 12px", color: COLORS.warn, maxWidth: 160 }}>{r?.descPendencia || "-"}</td>
+                  <td style={{ padding: "9px 12px" }}>{alerts.map((a, j) => <div key={j} style={{ color: COLORS.danger, fontSize: 11, fontWeight: 600 }}>⚠ {a}</div>)}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 12, marginTop: 20, justifyContent: "flex-end" }}>
           <button onClick={() => exportExcel(patients, rounds)} style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⬇ Exportar Excel (.xlsx)</button>
           <button onClick={onClose} style={{ padding: "9px 22px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
@@ -578,7 +570,7 @@ function ReportModal({ patients, rounds, onClose }) {
   );
 }
 
-// ── App principal ─────────────────────────────────────────────────────────────
+// ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [patients,     setPatients]     = useState([]);
   const [rounds,       setRounds]       = useState({});
@@ -590,28 +582,54 @@ export default function App() {
   const [filter,       setFilter]       = useState("todos");
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
+  const [error,        setError]        = useState(null);
 
   const dataHoje = hoje();
 
-  // ── Carregar dados do Supabase ──────────────────────────────────────────────
+  // ── Carregar dados ──────────────────────────────────────────────────────────
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data: pats } = await supabase.from("patients").select("*").order("id");
-      const { data: rds  } = await supabase.from("rounds").select("*").eq("data", dataHoje);
+      setError(null);
+      try {
+        const { data: pats, error: e1 } = await supabase
+          .from("patients").select("*").order("id");
+        if (e1) throw e1;
 
-      if (pats) setPatients(pats);
-      if (rds) {
+        const { data: rds, error: e2 } = await supabase
+          .from("rounds").select("*").eq("data", dataHoje);
+        if (e2) throw e2;
+
+        // Garantir estrutura mínima em cada paciente
+        const patsNorm = (pats || []).map(p => ({
+          ...p,
+          nome:        p.nome        || "",
+          diagnostico: p.diagnostico || "",
+          gravidade:   p.gravidade   || "livre",
+          dataNasc:    p.dataNasc    || null,
+          dataAdm:     p.dataAdm     || null,
+        }));
+
+        setPatients(patsNorm);
+
         const map = {};
-        rds.forEach(r => { map[r.patient_id] = r.round_data; });
+        (rds || []).forEach(r => {
+          // Garantir que dispositivos existe no round carregado
+          const rd = r.round_data || {};
+          if (!rd.dispositivos) rd.dispositivos = INITIAL_ROUND.dispositivos;
+          map[r.patient_id] = rd;
+        });
         setRounds(map);
+      } catch (err) {
+        setError("Erro ao conectar ao banco de dados. Verifique sua conexão.");
+        console.error(err);
       }
       setLoading(false);
     }
     load();
   }, []);
 
-  // ── Salvar round no Supabase ────────────────────────────────────────────────
+  // ── Salvar round ────────────────────────────────────────────────────────────
   const handleChange = useCallback(async (r) => {
     setRounds(prev => ({ ...prev, [selected]: r }));
     setSaving(true);
@@ -624,44 +642,53 @@ export default function App() {
     setSaving(false);
   }, [selected]);
 
-  // ── Salvar paciente no Supabase ─────────────────────────────────────────────
+  // ── Salvar paciente ─────────────────────────────────────────────────────────
   const savePatient = async (id, data) => {
     setPatients(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
     await supabase.from("patients").update({
-      nome: data.nome, dataNasc: data.dataNasc, dataAdm: data.dataAdm,
-      diagnostico: data.diagnostico, gravidade: data.gravidade,
-      updated_at: new Date().toISOString(),
+      nome:        data.nome,
+      dataNasc:    data.dataNasc || null,
+      dataAdm:     data.dataAdm  || null,
+      diagnostico: data.diagnostico,
+      gravidade:   data.gravidade,
+      updated_at:  new Date().toISOString(),
     }).eq("id", id);
   };
 
-  // ── Limpar paciente no Supabase ─────────────────────────────────────────────
+  // ── Limpar paciente ─────────────────────────────────────────────────────────
   const clearPatient = async (id) => {
-    setPatients(prev => prev.map(p => p.id === id ? { ...p, nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" } : p));
+    setPatients(prev => prev.map(p => p.id === id
+      ? { ...p, nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" } : p));
     setRounds(prev => { const n = { ...prev }; delete n[id]; return n; });
     await supabase.from("patients").update({ nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" }).eq("id", id);
     await supabase.from("rounds").delete().eq("patient_id", id);
   };
 
-  // ── Limpar todos no Supabase ────────────────────────────────────────────────
+  // ── Limpar todos ────────────────────────────────────────────────────────────
   const clearAll = async () => {
     setPatients(prev => prev.map(p => ({ ...p, nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" })));
     setRounds({});
     setShowClearAll(false);
-    await supabase.from("patients").update({ nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" }).neq("id", 0);
-    await supabase.from("rounds").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("patients").update({ nome: "", dataNasc: null, dataAdm: null, diagnostico: "", gravidade: "livre" }).gte("id", 1);
+    await supabase.from("rounds").delete().gte("patient_id", 1);
   };
 
   const selPat  = patients.find(p => p.id === selected);
   const editPat = patients.find(p => p.id === editingId);
   const date    = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
+  // Só conta como ocupado quem tem nome
   const withPats   = patients.filter(p => p.nome);
   const roundsDone = withPats.filter(p => rounds[p.id]).length;
   const total      = withPats.length;
 
+  // Filtros — leitos vazios sempre aparecem em "Todos"
   const filtered = patients.filter(p => {
-    if (search && !p.nome?.toLowerCase().includes(search.toLowerCase()) && !p.leito?.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter === "pendente" && (rounds[p.id] || !p.nome)) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!p.nome?.toLowerCase().includes(q) && !p.leito?.toLowerCase().includes(q)) return false;
+    }
+    if (filter === "pendente" && (!p.nome || rounds[p.id])) return false;
     if (filter === "alta" && p.gravidade !== "alta") return false;
     return true;
   });
@@ -673,6 +700,16 @@ export default function App() {
         <div style={{ fontSize: 48, marginBottom: 16 }}>🏥</div>
         <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.navy }}>Carregando dados da UTI...</div>
         <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 8 }}>Conectando ao banco de dados</div>
+      </div>
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ textAlign: "center", maxWidth: 400 }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.danger, marginBottom: 8 }}>{error}</div>
+        <button onClick={() => window.location.reload()} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Tentar novamente</button>
       </div>
     </div>
   );
@@ -711,14 +748,20 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ color: "#8BBBD9", fontSize: 13 }}>{date}</div>
-          <button onClick={() => setShowClearAll(true)} style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${COLORS.danger}44`, background: "transparent", color: COLORS.danger, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🗑 Limpar todos</button>
+          <button onClick={() => setShowClearAll(true)} style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${COLORS.danger}55`, background: "transparent", color: COLORS.danger, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🗑 Limpar todos</button>
           <button onClick={() => setShowReport(true)} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: COLORS.accent, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>📊 Relatório</button>
         </div>
       </div>
 
       <div style={{ padding: "24px 28px" }}>
+        {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
-          {[["Leitos ocupados", total, COLORS.navy, "🛏"], ["Rounds feitos", roundsDone, COLORS.success, "✅"], ["Pendentes", total - roundsDone, COLORS.warn, "⏳"], ["Alertas", patients.filter(p => computeAlerts(rounds[p.id], p).length > 0).length, COLORS.danger, "⚠️"]].map(([lbl, val, color, icon]) => (
+          {[
+            ["Leitos ocupados", total, COLORS.navy, "🛏"],
+            ["Rounds feitos", roundsDone, COLORS.success, "✅"],
+            ["Pendentes", total - roundsDone, COLORS.warn, "⏳"],
+            ["Alertas", patients.filter(p => computeAlerts(rounds[p.id], p).length > 0).length, COLORS.danger, "⚠️"],
+          ].map(([lbl, val, color, icon]) => (
             <div key={lbl} style={{ background: "#fff", borderRadius: 12, padding: "16px 20px", border: `1px solid ${COLORS.border}` }}>
               <div style={{ fontSize: 22, marginBottom: 4 }}>{icon}</div>
               <div style={{ fontSize: 26, fontWeight: 800, color }}>{val}</div>
@@ -727,6 +770,7 @@ export default function App() {
           ))}
         </div>
 
+        {/* Progress */}
         <div style={{ background: "#fff", borderRadius: 12, padding: "14px 20px", border: `1px solid ${COLORS.border}`, marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy }}>Progresso do round</span>
@@ -737,6 +781,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Filtros */}
         <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar paciente ou leito..."
             style={{ flex: 1, minWidth: 200, border: `1.5px solid ${COLORS.border}`, borderRadius: 10, padding: "9px 16px", fontSize: 14, color: COLORS.navy, outline: "none", background: "#fff" }} />
@@ -745,14 +790,17 @@ export default function App() {
           ))}
         </div>
 
+        {/* Grid leitos */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 14 }}>
-          {filtered.map(p => <PatientCard key={p.id} pat={p} round={rounds[p.id]} onSelect={setSelected} onEdit={setEditingId} />)}
+          {filtered.map(p => (
+            <PatientCard key={p.id} pat={p} round={rounds[p.id]} onSelect={setSelected} onEdit={setEditingId} />
+          ))}
         </div>
       </div>
 
       {editingId && editPat && <EditPatientModal pat={editPat} onSave={savePatient} onClear={clearPatient} onClose={() => setEditingId(null)} />}
-      {showReport   && <ReportModal patients={patients} rounds={rounds} onClose={() => setShowReport(false)} />}
-      {showClearAll && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
+      {showReport    && <ReportModal patients={patients} rounds={rounds} onClose={() => setShowReport(false)} />}
+      {showClearAll  && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
     </div>
   );
 }
