@@ -420,8 +420,16 @@ function RelatorioModal({ patients, rounds, onClose, onSave }) {
 }
 
 // ── Modal histórico de relatórios ─────────────────────────────────────────────
-function HistoricoModal({ relatorios, onClose }) {
-  const [sel, setSel] = useState(null);
+function HistoricoModal({ relatorios, onDelete, onClose }) {
+  const [sel,     setSel]     = useState(null);
+  const [confirm, setConfirm] = useState(false);
+
+  const handleDelete = () => {
+    onDelete(sel);
+    setSel(null);
+    setConfirm(false);
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(11,37,69,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "24px", maxWidth: 700, width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
@@ -429,23 +437,52 @@ function HistoricoModal({ relatorios, onClose }) {
           <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.navy }}>🗂 Histórico de Relatórios</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
         </div>
+
         {relatorios.length === 0 ? (
           <div style={{ textAlign: "center", color: COLORS.muted, padding: 40 }}>Nenhum relatório salvo.</div>
         ) : (
           <div style={{ display: "flex", gap: 12, flex: 1, overflow: "hidden" }}>
+            {/* Lista */}
             <div style={{ width: 200, overflowY: "auto", borderRight: `1px solid ${COLORS.border}`, paddingRight: 12 }}>
               {relatorios.map((r, i) => (
-                <div key={i} onClick={() => setSel(r)} style={{ padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 6, background: sel === r ? COLORS.teal + "18" : COLORS.lightBg, border: `1px solid ${sel === r ? COLORS.teal : COLORS.border}` }}>
+                <div key={i} onClick={() => { setSel(r); setConfirm(false); }} style={{
+                  padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 6,
+                  background: sel === r ? COLORS.teal + "18" : COLORS.lightBg,
+                  border: `1px solid ${sel === r ? COLORS.teal : COLORS.border}`,
+                }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy }}>{r.tipo === "geral" ? "📊 Geral" : "🛏 Por paciente"}</div>
                   <div style={{ fontSize: 11, color: COLORS.muted }}>{r.data}</div>
                 </div>
               ))}
             </div>
+
+            {/* Conteúdo */}
             <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               {sel ? (
                 <>
                   <textarea readOnly value={sel.texto} style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, fontSize: 12, fontFamily: "monospace", resize: "none", background: COLORS.lightBg, color: COLORS.navy }} />
-                  <button onClick={() => { navigator.clipboard.writeText(sel.texto); alert("Copiado!"); }} style={{ marginTop: 10, padding: "9px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>📲 Copiar para WhatsApp</button>
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button onClick={() => { navigator.clipboard.writeText(sel.texto); alert("Copiado!"); }}
+                      style={{ flex: 2, padding: "9px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      📲 Copiar para WhatsApp
+                    </button>
+                    <button onClick={() => setConfirm(true)}
+                      style={{ flex: 1, padding: "9px", borderRadius: 10, border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      🗑 Apagar
+                    </button>
+                  </div>
+
+                  {/* Confirmação de exclusão */}
+                  {confirm && (
+                    <div style={{ marginTop: 10, background: COLORS.danger + "12", borderRadius: 10, padding: "12px 14px" }}>
+                      <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 8 }}>Apagar este relatório?</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={handleDelete} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Sim, apagar</button>
+                        <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: COLORS.muted }}>Selecione um relatório</div>
@@ -453,6 +490,7 @@ function HistoricoModal({ relatorios, onClose }) {
             </div>
           </div>
         )}
+
         <button onClick={onClose} style={{ marginTop: 16, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
       </div>
     </div>
@@ -784,7 +822,7 @@ export default function App() {
         // Carregar relatórios salvos (últimos 7 dias)
         const seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
         const { data: rels } = await supabase.from("relatorios").select("*").gte("created_at", seteDiasAtras.toISOString()).order("created_at", { ascending: false });
-        if (rels) setRelatorios(rels.map(r => ({ tipo: r.tipo, texto: r.texto, data: new Date(r.created_at).toLocaleString("pt-BR") })));
+        if (rels) setRelatorios(rels.map(r => ({ id: r.id, tipo: r.tipo, texto: r.texto, data: new Date(r.created_at).toLocaleString("pt-BR") })));
       } catch (err) {
         setError("Erro ao conectar ao banco de dados.");
         console.error(err);
@@ -822,9 +860,14 @@ export default function App() {
   };
 
   const salvarRelatorio = async (tipo, texto) => {
-    const novoRel = { tipo, texto, data: new Date().toLocaleString("pt-BR") };
+    const { data } = await supabase.from("relatorios").insert({ tipo, texto, created_at: new Date().toISOString() }).select().single();
+    const novoRel = { id: data?.id, tipo, texto, data: new Date().toLocaleString("pt-BR") };
     setRelatorios(prev => [novoRel, ...prev]);
-    await supabase.from("relatorios").insert({ tipo, texto, created_at: new Date().toISOString() });
+  };
+
+  const deletarRelatorio = async (rel) => {
+    setRelatorios(prev => prev.filter(r => r !== rel));
+    if (rel.id) await supabase.from("relatorios").delete().eq("id", rel.id);
   };
 
   const selPat  = patients.find(p => p.id === selected);
@@ -930,7 +973,7 @@ export default function App() {
 
       {editingId && editPat && <EditPatientModal pat={editPat} onSave={savePatient} onClear={clearPatient} onClose={() => setEditingId(null)} />}
       {showRelatorio && <RelatorioModal patients={patients} rounds={rounds} onClose={() => setShowRelatorio(false)} onSave={salvarRelatorio} />}
-      {showHistorico && <HistoricoModal relatorios={relatorios} onClose={() => setShowHistorico(false)} />}
+      {showHistorico && <HistoricoModal relatorios={relatorios} onDelete={deletarRelatorio} onClose={() => setShowHistorico(false)} />}
       {showClearAll  && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
     </div>
   );
