@@ -408,10 +408,11 @@ function RelatorioModal({ patients, rounds, onClose, onSave }) {
           ))}
         </div>
         <textarea readOnly value={texto} style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, fontSize: 12, fontFamily: "monospace", resize: "none", background: COLORS.lightBg, color: COLORS.navy, minHeight: 300 }} />
-        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-          <button onClick={copiar} style={{ flex: 2, padding: "10px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📲 Copiar para WhatsApp</button>
-          <button onClick={() => { onSave(tipo, texto); }} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>💾 Salvar</button>
-          <button onClick={onClose} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
+        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <button onClick={copiar} style={{ flex: 2, minWidth: 160, padding: "10px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📲 Copiar para WhatsApp</button>
+          <button onClick={() => exportExcel(patients, rounds)} style={{ flex: 1, minWidth: 120, padding: "10px", borderRadius: 10, border: "none", background: "#1A6B72", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📊 Exportar Excel</button>
+          <button onClick={() => { onSave(tipo, texto); }} style={{ flex: 1, minWidth: 80, padding: "10px", borderRadius: 10, border: "none", background: COLORS.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>💾 Salvar</button>
+          <button onClick={onClose} style={{ flex: 1, minWidth: 80, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
         </div>
       </div>
     </div>
