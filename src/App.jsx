@@ -18,7 +18,7 @@ const ART_OPTS = ["ARD","ARE","AFD","AFE","ASCD","ASCE"];
 const INITIAL_DISPOSITIVOS = {
   cvc: [], arterial: [],
   hd: false, svd: false, sne: false, sng: false, drenos: false,
-  desinvadir: { cvc: {}, arterial: {}, hd: false, svd: false, sne: false, sng: false, drenos: false },
+  desinvadir: { cvc: {}, arterial: {}, hd: null, svd: null, sne: null, sng: null, drenos: null },
 };
 
 const INITIAL_ROUND = {
@@ -35,20 +35,40 @@ const INITIAL_ROUND = {
   diagnostico: "",
 };
 
+// ── Hook para detectar mobile ────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < 700 : false);
+  useEffect(() => {
+    function onResize() { setIsMobile(window.innerWidth < 700); }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return isMobile;
+}
+
 function hoje() { return new Date().toISOString().slice(0, 10); }
+
 function calcIdade(d) {
   if (!d) return null;
   const n = new Date(d), h = new Date();
+  if (isNaN(n.getTime())) return null;
   let a = h.getFullYear() - n.getFullYear();
   if (h.getMonth() < n.getMonth() || (h.getMonth() === n.getMonth() && h.getDate() < n.getDate())) a--;
-  return a;
+  return a >= 0 ? a : null;
 }
+
 function calcDias(d) {
   if (!d) return 0;
-  const diff = Math.floor((new Date() - new Date(d)) / 86400000);
+  const adm = new Date(d);
+  if (isNaN(adm.getTime())) return 0;
+  const diff = Math.floor((new Date() - adm) / 86400000);
   return diff >= 0 ? diff : 0;
 }
-const gravBadge = (g) => ({ alta:[COLORS.danger,"⚠ Alta"], media:[COLORS.warn,"◈ Média"], baixa:[COLORS.success,"✓ Baixa"], livre:[COLORS.muted,"Livre"] }[g] || [COLORS.muted, g]);
+
+const gravBadge = (g) => ({
+  alta: [COLORS.danger, "⚠ Alta"], media: [COLORS.warn, "◈ Média"],
+  baixa: [COLORS.success, "✓ Baixa"], livre: [COLORS.muted, "Livre"],
+}[g] || [COLORS.muted, g]);
 
 function computeAlerts(r, p) {
   const a = [];
@@ -63,7 +83,21 @@ function computeAlerts(r, p) {
   return a;
 }
 
-// ── Gerador de relatório WhatsApp ─────────────────────────────────────────────
+// ── Helpers de dispositivos ──────────────────────────────────────────────────
+function listarDispositivos(dev) {
+  if (!dev) return "Nenhum";
+  const partes = [];
+  if (dev.cvc?.length) partes.push(`CVC (${dev.cvc.join(", ")})`);
+  if (dev.arterial?.length) partes.push(`Art (${dev.arterial.join(", ")})`);
+  if (dev.hd) partes.push("HD");
+  if (dev.svd) partes.push("SVD");
+  if (dev.sne) partes.push("SNE");
+  if (dev.sng) partes.push("SNG");
+  if (dev.drenos) partes.push("Drenos");
+  return partes.length ? partes.join(" | ") : "Nenhum";
+}
+
+// ── Relatórios WhatsApp ──────────────────────────────────────────────────────
 function gerarRelatorioGeral(patients, rounds) {
   const ocupados = patients.filter(p => p.nome);
   const vagos    = patients.filter(p => !p.nome);
@@ -106,42 +140,34 @@ ${alertas.length > 0 ? alertas.join("\n") : "✅ Sem alertas no momento"}
 📊 _Gerado pelo UTI Round — IMIP_`;
 }
 
+function simNaoEmoji(v) { return v === "Sim" ? "✅" : v === "Não" ? "❌" : "—"; }
+
 function gerarRelatorioEspecifico(patients, rounds) {
   const ocupados = patients.filter(p => p.nome);
   const dt = new Date().toLocaleDateString("pt-BR") + " — " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
+  if (ocupados.length === 0) {
+    return `🏥 *ROUND UTI CLÍNICA — IMIP*\n📅 *${dt}*\n\nNenhum paciente admitido.`;
+  }
+
   const blocos = ocupados.map(p => {
     const r = rounds[p.id];
-    const dev = r?.dispositivos || INITIAL_DISPOSITIVOS;
     const idade = calcIdade(p.dataNasc);
     const dias  = calcDias(p.dataAdm);
-    const cvcList = (dev.cvc || []).join(", ");
-    const artList = (dev.arterial || []).join(", ");
-    const devList = [
-      cvcList && `CVC (${cvcList})`,
-      artList && `Art (${artList})`,
-      dev.hd && "HD",
-      dev.svd && "SVD",
-      dev.sne && "SNE",
-      dev.sng && "SNG",
-      dev.drenos && "Drenos",
-    ].filter(Boolean).join(" | ") || "Nenhum";
-
     return `🛏 *${p.leito} — ${p.nome}*
 👤 ${idade ?? "?"}a | 🕐 ${dias}d internado
 📋 *Diagnóstico:* ${r?.diagnostico || p.diagnostico || "—"}
 ⚠️ *Gravidade:* ${p.gravidade}
 
-🧠 *Neuro:* RASS ${r?.rass || "—"} | Dor ${r?.dor === "Sim" ? "✅" : r?.dor === "Não" ? "❌" : "—"} | Delirium ${r?.delirium === "Sim" ? "✅" : r?.delirium === "Não" ? "❌" : "—"}
-❤️ *Cardio:* DVA ${r?.dva === "Sim" ? "✅" : r?.dva === "Não" ? "❌" : "—"} | PAM: ${r?.pam || "—"} mmHg
-🫁 *Resp:* ${r?.suporteResp || "—"} ${r?.planoDesmame?.length ? "| " + r.planoDesmame.join(", ") : ""}
-🍽️ *Nutrição:* ${r?.viaAlimentar || "—"} | Meta calórica ${r?.metaCalorica === "Sim" ? "✅" : r?.metaCalorica === "Não" ? "❌" : "—"}
+🧠 *Neuro:* RASS ${r?.rass || "—"} | Dor ${simNaoEmoji(r?.dor)} | Delirium ${simNaoEmoji(r?.delirium)}
+❤️ *Cardio:* DVA ${simNaoEmoji(r?.dva)} | PAM: ${r?.pam || "—"} mmHg
+🫁 *Resp:* ${r?.suporteResp || "—"}${r?.planoDesmame?.length ? " | " + r.planoDesmame.join(", ") : ""}
+🍽️ *Nutrição:* ${r?.viaAlimentar || "—"} | Meta calórica ${simNaoEmoji(r?.metaCalorica)}
 🫘 *Renal:* ${r?.funcaoRenal || "—"} | BH ${r?.metaBH || "—"}
-🦠 *Infeccioso:* ATB ${r?.atb === "Sim" ? "✅" : r?.atb === "Não" ? "❌" : "—"} | Piora ${r?.pioraInfec === "Sim" ? "✅" : r?.pioraInfec === "Não" ? "❌" : "—"}
+🦠 *Infeccioso:* ATB ${simNaoEmoji(r?.atb)} | Piora ${simNaoEmoji(r?.pioraInfec)}
 💉 *Profilaxias:* TEV ${r?.tev || "—"} | LAMG ${r?.lamg || "—"} | HO ${r?.higieneOral || "—"}
-🔌 *Dispositivos:* ${devList}
-${r?.pendenciaExame === "Sim" ? `📌 *Pendência:* ${r?.descPendencia || "—"}` : ""}
-🏠 *Alta:* ${r?.previsaoAlta || "—"}`;
+🔌 *Dispositivos:* ${listarDispositivos(r?.dispositivos)}
+${r?.pendenciaExame === "Sim" && r?.descPendencia ? `📌 *Pendência:* ${r.descPendencia}\n` : ""}🏠 *Alta:* ${r?.previsaoAlta || "—"}`;
   });
 
   return `🏥 *ROUND UTI CLÍNICA — IMIP*
@@ -154,7 +180,7 @@ ${blocos.join("\n\n━━━━━━━━━━━━━━━━━\n")}
 📊 _Gerado pelo UTI Round — IMIP_`;
 }
 
-// ── Exportar Excel ────────────────────────────────────────────────────────────
+// ── Exportar Excel ───────────────────────────────────────────────────────────
 function exportExcel(patients, rounds) {
   const rows = patients.filter(p => p.nome);
   if (!rows.length) { alert("Nenhum paciente para exportar."); return; }
@@ -183,13 +209,15 @@ function exportExcel(patients, rounds) {
       "Bundles OK": r.bundles || "", "Bundle Pendente": r.bundlesPendente || "",
       "Mudança Decúbito": r.mudancaDecubito || "", "LPP": r.lesaoPressao || "",
       "Aval Especializada": r.avalEspecializada || "",
-      "CVC": (dev.cvc || []).join(" | "), "CVC Desinvadir": Object.values(dev.desinvadir?.cvc || {}).some(v => v) ? "Sim" : "Não",
-      "Cateter Arterial": (dev.arterial || []).join(" | "), "Art Desinvadir": Object.values(dev.desinvadir?.arterial || {}).some(v => v) ? "Sim" : "Não",
-      "HD": dev.hd ? "Sim" : "Não", "HD Desinvadir": dev.desinvadir?.hd ? "Sim" : "Não",
-      "SVD": dev.svd ? "Sim" : "Não", "SVD Desinvadir": dev.desinvadir?.svd ? "Sim" : "Não",
-      "SNE": dev.sne ? "Sim" : "Não", "SNE Desinvadir": dev.desinvadir?.sne ? "Sim" : "Não",
-      "SNG": dev.sng ? "Sim" : "Não", "SNG Desinvadir": dev.desinvadir?.sng ? "Sim" : "Não",
-      "Drenos": dev.drenos ? "Sim" : "Não", "Drenos Desinvadir": dev.desinvadir?.drenos ? "Sim" : "Não",
+      "CVC": (dev.cvc || []).join(" | "),
+      "CVC Desinvadir": Object.entries(dev.desinvadir?.cvc || {}).filter(([_, v]) => v).map(([k]) => k).join(", "),
+      "Cateter Arterial": (dev.arterial || []).join(" | "),
+      "Art Desinvadir": Object.entries(dev.desinvadir?.arterial || {}).filter(([_, v]) => v).map(([k]) => k).join(", "),
+      "HD": dev.hd ? "Sim" : "Não", "HD Desinvadir": dev.desinvadir?.hd ?? "",
+      "SVD": dev.svd ? "Sim" : "Não", "SVD Desinvadir": dev.desinvadir?.svd ?? "",
+      "SNE": dev.sne ? "Sim" : "Não", "SNE Desinvadir": dev.desinvadir?.sne ?? "",
+      "SNG": dev.sng ? "Sim" : "Não", "SNG Desinvadir": dev.desinvadir?.sng ?? "",
+      "Drenos": dev.drenos ? "Sim" : "Não", "Drenos Desinvadir": dev.desinvadir?.drenos ?? "",
       "Diretivas": (r.diretivas || []).join(" | "),
       "Pendência": r.pendenciaExame || "", "Desc Pendência": r.descPendencia || "",
       "Previsão Alta": r.previsaoAlta || "",
@@ -203,38 +231,43 @@ function exportExcel(patients, rounds) {
   XLSX.writeFile(wb, `round-uti-${hoje()}.xlsx`);
 }
 
-// ── Atoms ─────────────────────────────────────────────────────────────────────
+// ── Atoms ────────────────────────────────────────────────────────────────────
 function Pill({ label, selected, onClick, color }) {
   return (
     <button onClick={onClick} style={{
-      padding: "5px 14px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap",
+      padding: "7px 14px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap",
       border: `1.5px solid ${selected ? (color || COLORS.teal) : COLORS.border}`,
       background: selected ? (color || COLORS.teal) : "#fff",
       color: selected ? "#fff" : COLORS.navy,
       fontSize: 13, fontWeight: selected ? 600 : 400, transition: "all .15s",
+      minHeight: 34, touchAction: "manipulation",
     }}>{label}</button>
   );
 }
+
 function MultiPill({ label, checked, onChange, color }) {
   return (
     <button onClick={() => onChange(!checked)} style={{
-      padding: "5px 14px", borderRadius: 20, cursor: "pointer",
+      padding: "7px 14px", borderRadius: 20, cursor: "pointer",
       border: `1.5px solid ${checked ? (color || COLORS.accent) : COLORS.border}`,
       background: checked ? (color || COLORS.accent) : "#fff",
       color: checked ? "#fff" : COLORS.navy,
       fontSize: 13, fontWeight: checked ? 600 : 400, transition: "all .15s",
+      minHeight: 34, touchAction: "manipulation",
     }}>{label}</button>
   );
 }
+
 function SecHdr({ title, icon }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, marginTop: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, marginTop: 4 }}>
       <span style={{ fontSize: 17 }}>{icon}</span>
       <span style={{ fontWeight: 700, fontSize: 12, color: COLORS.navy, letterSpacing: ".6px", textTransform: "uppercase" }}>{title}</span>
       <div style={{ flex: 1, height: 1, background: COLORS.border }} />
     </div>
   );
 }
+
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -243,47 +276,64 @@ function Field({ label, children }) {
     </div>
   );
 }
-function TInput({ value, onChange, placeholder, w }) {
+
+function TInput({ value, onChange, placeholder, w, type = "text" }) {
   return (
-    <input value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{
-      border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 12px",
-      fontSize: 13, color: COLORS.navy, outline: "none", background: "#fff",
-      width: w || "100%", maxWidth: w || 240, boxSizing: "border-box",
-    }} />
-  );
-}
-function TArea({ value, onChange, placeholder, rows = 2 }) {
-  return (
-    <textarea value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} style={{
-      border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px",
-      fontSize: 13, color: COLORS.navy, outline: "none", width: "100%",
-      resize: "vertical", background: "#fff", fontFamily: "inherit", boxSizing: "border-box",
-    }} />
+    <input type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{
+        border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px",
+        fontSize: 14, color: COLORS.navy, outline: "none", background: "#fff",
+        width: w || "100%", maxWidth: w || "100%", boxSizing: "border-box", minHeight: 36,
+      }} />
   );
 }
 
-// ── Seção Dispositivos ────────────────────────────────────────────────────────
+function TArea({ value, onChange, placeholder, rows = 2 }) {
+  return (
+    <textarea value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
+      style={{
+        border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px",
+        fontSize: 14, color: COLORS.navy, outline: "none", width: "100%",
+        resize: "vertical", background: "#fff", fontFamily: "inherit", boxSizing: "border-box",
+      }} />
+  );
+}
+
+// Grid responsivo (cols no desktop, 1 no mobile)
+function Grid({ cols = 2, children, isMobile, gap = 14 }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: isMobile ? "1fr" : `repeat(${cols}, 1fr)`,
+      gap,
+    }}>{children}</div>
+  );
+}
+
+// ── Seção Dispositivos ───────────────────────────────────────────────────────
 function DispositivosSection({ dev, onChange }) {
   const d = dev || INITIAL_DISPOSITIVOS;
 
-  const toggleCVC = (opt) => {
-    const cur = d.cvc || [];
+  const toggleArr = (key, opt) => {
+    const cur = d[key] || [];
     const novo = cur.includes(opt) ? cur.filter(x => x !== opt) : [...cur, opt];
-    const desCvc = { ...(d.desinvadir?.cvc || {}) };
-    if (!novo.includes(opt)) delete desCvc[opt];
-    onChange({ ...d, cvc: novo, desinvadir: { ...d.desinvadir, cvc: desCvc } });
+    const desKey = { ...(d.desinvadir?.[key] || {}) };
+    if (!novo.includes(opt)) delete desKey[opt];
+    onChange({ ...d, [key]: novo, desinvadir: { ...d.desinvadir, [key]: desKey } });
   };
-  const toggleArt = (opt) => {
-    const cur = d.arterial || [];
-    const novo = cur.includes(opt) ? cur.filter(x => x !== opt) : [...cur, opt];
-    const desArt = { ...(d.desinvadir?.arterial || {}) };
-    if (!novo.includes(opt)) delete desArt[opt];
-    onChange({ ...d, arterial: novo, desinvadir: { ...d.desinvadir, arterial: desArt } });
+
+  const toggleSimples = (key) => {
+    const novoValor = !d[key];
+    onChange({ ...d, [key]: novoValor, desinvadir: { ...d.desinvadir, [key]: novoValor ? d.desinvadir?.[key] : null } });
   };
-  const toggleSimples = (key) => onChange({ ...d, [key]: !d[key], desinvadir: { ...d.desinvadir, [key]: false } });
-  const setDesinvCvc = (opt, val) => onChange({ ...d, desinvadir: { ...d.desinvadir, cvc: { ...(d.desinvadir?.cvc || {}), [opt]: val } } });
-  const setDesinvArt = (opt, val) => onChange({ ...d, desinvadir: { ...d.desinvadir, arterial: { ...(d.desinvadir?.arterial || {}), [opt]: val } } });
-  const setDesinvSimp = (key, val) => onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: val } });
+
+  const setDesinvArr = (key, opt, val) => {
+    onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: { ...(d.desinvadir?.[key] || {}), [opt]: val } } });
+  };
+
+  const setDesinvSimp = (key, val) => {
+    onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: val } });
+  };
 
   const boxStyle = (active) => ({
     background: active ? COLORS.teal + "12" : COLORS.lightBg,
@@ -292,212 +342,106 @@ function DispositivosSection({ dev, onChange }) {
     marginBottom: 8,
   });
 
-  return (
-    <div>
-      {/* CVC */}
-      <div style={boxStyle((d.cvc || []).length > 0)}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy, marginBottom: 8 }}>🔵 Cateter Venoso Central</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-          {CVC_OPTS.map(opt => (
-            <button key={opt} onClick={() => toggleCVC(opt)} style={{
-              padding: "4px 12px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 600,
-              border: `1.5px solid ${(d.cvc || []).includes(opt) ? COLORS.teal : COLORS.border}`,
-              background: (d.cvc || []).includes(opt) ? COLORS.teal : "#fff",
-              color: (d.cvc || []).includes(opt) ? "#fff" : COLORS.navy,
+  const renderMultiplo = (key, opts, label, icon, color = COLORS.teal) => {
+    const lista = d[key] || [];
+    const active = lista.length > 0;
+    return (
+      <div style={boxStyle(active)}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy, marginBottom: 8 }}>{icon} {label}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: lista.length ? 8 : 0 }}>
+          {opts.map(opt => (
+            <button key={opt} onClick={() => toggleArr(key, opt)} style={{
+              padding: "6px 12px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 600,
+              border: `1.5px solid ${lista.includes(opt) ? color : COLORS.border}`,
+              background: lista.includes(opt) ? color : "#fff",
+              color: lista.includes(opt) ? "#fff" : COLORS.navy,
+              minHeight: 30,
             }}>{opt}</button>
           ))}
         </div>
-        {(d.cvc || []).map(opt => (
-          <div key={opt} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-            <span style={{ fontSize: 12, color: COLORS.teal, fontWeight: 600, minWidth: 40 }}>{opt}</span>
-            <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
-            {["Sim","Não"].map(v => (
-              <button key={v} onClick={() => setDesinvCvc(opt, v === "Sim")} style={{
-                padding: "2px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                border: `1.5px solid ${(d.desinvadir?.cvc?.[opt] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
-                background: (d.desinvadir?.cvc?.[opt] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
-                color: (d.desinvadir?.cvc?.[opt] ? "Sim" : "Não") === v ? "#fff" : COLORS.navy,
-              }}>{v}</button>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* Cateter Arterial */}
-      <div style={boxStyle((d.arterial || []).length > 0)}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy, marginBottom: 8 }}>🔴 Cateter Arterial</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-          {ART_OPTS.map(opt => (
-            <button key={opt} onClick={() => toggleArt(opt)} style={{
-              padding: "4px 12px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 600,
-              border: `1.5px solid ${(d.arterial || []).includes(opt) ? COLORS.danger : COLORS.border}`,
-              background: (d.arterial || []).includes(opt) ? COLORS.danger : "#fff",
-              color: (d.arterial || []).includes(opt) ? "#fff" : COLORS.navy,
-            }}>{opt}</button>
-          ))}
-        </div>
-        {(d.arterial || []).map(opt => (
-          <div key={opt} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-            <span style={{ fontSize: 12, color: COLORS.danger, fontWeight: 600, minWidth: 40 }}>{opt}</span>
-            <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
-            {["Sim","Não"].map(v => (
-              <button key={v} onClick={() => setDesinvArt(opt, v === "Sim")} style={{
-                padding: "2px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                border: `1.5px solid ${(d.desinvadir?.arterial?.[opt] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
-                background: (d.desinvadir?.arterial?.[opt] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
-                color: (d.desinvadir?.arterial?.[opt] ? "Sim" : "Não") === v ? "#fff" : COLORS.navy,
-              }}>{v}</button>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* Dispositivos simples */}
-      {[["hd","🟣 Cateter de HD"],["svd","🟡 SVD"],["sne","🟠 SNE"],["sng","⚪ SNG"],["drenos","🟤 Drenos"]].map(([key, lbl]) => (
-        <div key={key} style={boxStyle(d[key])}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button onClick={() => toggleSimples(key)} style={{
-              padding: "4px 14px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 700,
-              border: `1.5px solid ${d[key] ? COLORS.teal : COLORS.border}`,
-              background: d[key] ? COLORS.teal : "#fff",
-              color: d[key] ? "#fff" : COLORS.navy,
-            }}>{d[key] ? "✓ Presente" : "Ausente"}</button>
-            <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy }}>{lbl}</span>
-            {d[key] && (
-              <>
-                <span style={{ fontSize: 12, color: COLORS.muted, marginLeft: 8 }}>Desinvadir?</span>
-                {["Sim","Não"].map(v => (
-                  <button key={v} onClick={() => setDesinvSimp(key, v === "Sim")} style={{
-                    padding: "2px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                    border: `1.5px solid ${(d.desinvadir?.[key] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
-                    background: (d.desinvadir?.[key] ? "Sim" : "Não") === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
-                    color: (d.desinvadir?.[key] ? "Sim" : "Não") === v ? "#fff" : COLORS.navy,
-                  }}>{v}</button>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Modal relatório WhatsApp ───────────────────────────────────────────────────
-function RelatorioModal({ patients, rounds, onClose, onSave }) {
-  const [tipo, setTipo] = useState("geral");
-  const texto = tipo === "geral"
-    ? gerarRelatorioGeral(patients, rounds)
-    : gerarRelatorioEspecifico(patients, rounds);
-
-  const copiar = () => {
-    navigator.clipboard.writeText(texto);
-    alert("Copiado! Cole no WhatsApp.");
-  };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(11,37,69,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "24px", maxWidth: 640, width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.navy }}>📋 Relatório</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {[["geral","📊 Resumo Geral"],["especifico","🛏 Por Paciente"]].map(([v,l]) => (
-            <button key={v} onClick={() => setTipo(v)} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${tipo === v ? COLORS.teal : COLORS.border}`, background: tipo === v ? COLORS.teal : "#fff", color: tipo === v ? "#fff" : COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>{l}</button>
-          ))}
-        </div>
-        <textarea readOnly value={texto} style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, fontSize: 12, fontFamily: "monospace", resize: "none", background: COLORS.lightBg, color: COLORS.navy, minHeight: 300 }} />
-        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-          <button onClick={copiar} style={{ flex: 2, minWidth: 160, padding: "10px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📲 Copiar para WhatsApp</button>
-          <button onClick={() => exportExcel(patients, rounds)} style={{ flex: 1, minWidth: 120, padding: "10px", borderRadius: 10, border: "none", background: "#1A6B72", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📊 Exportar Excel</button>
-          <button onClick={() => { onSave(tipo, texto); }} style={{ flex: 1, minWidth: 80, padding: "10px", borderRadius: 10, border: "none", background: COLORS.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>💾 Salvar</button>
-          <button onClick={onClose} style={{ flex: 1, minWidth: 80, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Modal histórico de relatórios ─────────────────────────────────────────────
-function HistoricoModal({ relatorios, onDelete, onClose }) {
-  const [sel,     setSel]     = useState(null);
-  const [confirm, setConfirm] = useState(false);
-
-  const handleDelete = () => {
-    onDelete(sel);
-    setSel(null);
-    setConfirm(false);
-  };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(11,37,69,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "24px", maxWidth: 700, width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.navy }}>🗂 Histórico de Relatórios</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
-        </div>
-
-        {relatorios.length === 0 ? (
-          <div style={{ textAlign: "center", color: COLORS.muted, padding: 40 }}>Nenhum relatório salvo.</div>
-        ) : (
-          <div style={{ display: "flex", gap: 12, flex: 1, overflow: "hidden" }}>
-            {/* Lista */}
-            <div style={{ width: 200, overflowY: "auto", borderRight: `1px solid ${COLORS.border}`, paddingRight: 12 }}>
-              {relatorios.map((r, i) => (
-                <div key={i} onClick={() => { setSel(r); setConfirm(false); }} style={{
-                  padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 6,
-                  background: sel === r ? COLORS.teal + "18" : COLORS.lightBg,
-                  border: `1px solid ${sel === r ? COLORS.teal : COLORS.border}`,
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy }}>{r.tipo === "geral" ? "📊 Geral" : "🛏 Por paciente"}</div>
-                  <div style={{ fontSize: 11, color: COLORS.muted }}>{r.data}</div>
-                </div>
+        {lista.map(opt => {
+          const desVal = d.desinvadir?.[key]?.[opt];
+          return (
+            <div key={opt} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color, fontWeight: 700, minWidth: 44 }}>{opt}</span>
+              <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
+              {["Sim","Não"].map(v => (
+                <button key={v} onClick={() => setDesinvArr(key, opt, v)} style={{
+                  padding: "4px 12px", borderRadius: 12, cursor: "pointer", fontSize: 12, fontWeight: 600,
+                  border: `1.5px solid ${desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
+                  background: desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
+                  color: desVal === v ? "#fff" : COLORS.navy,
+                  minHeight: 28,
+                }}>{v}</button>
               ))}
             </div>
+          );
+        })}
+      </div>
+    );
+  };
 
-            {/* Conteúdo */}
-            <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              {sel ? (
-                <>
-                  <textarea readOnly value={sel.texto} style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, fontSize: 12, fontFamily: "monospace", resize: "none", background: COLORS.lightBg, color: COLORS.navy }} />
-
-                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <button onClick={() => { navigator.clipboard.writeText(sel.texto); alert("Copiado!"); }}
-                      style={{ flex: 2, padding: "9px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                      📲 Copiar para WhatsApp
-                    </button>
-                    <button onClick={() => setConfirm(true)}
-                      style={{ flex: 1, padding: "9px", borderRadius: 10, border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                      🗑 Apagar
-                    </button>
-                  </div>
-
-                  {/* Confirmação de exclusão */}
-                  {confirm && (
-                    <div style={{ marginTop: 10, background: COLORS.danger + "12", borderRadius: 10, padding: "12px 14px" }}>
-                      <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 8 }}>Apagar este relatório?</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={handleDelete} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Sim, apagar</button>
-                        <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: COLORS.muted }}>Selecione um relatório</div>
-              )}
-            </div>
+  const renderSimples = (key, label, icon) => {
+    const active = d[key];
+    const desVal = d.desinvadir?.[key];
+    return (
+      <div style={boxStyle(active)}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button onClick={() => toggleSimples(key)} style={{
+            padding: "6px 14px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 700,
+            border: `1.5px solid ${active ? COLORS.teal : COLORS.border}`,
+            background: active ? COLORS.teal : "#fff",
+            color: active ? "#fff" : COLORS.navy, minHeight: 30,
+          }}>{active ? "✓ Presente" : "Ausente"}</button>
+          <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy }}>{icon} {label}</span>
+        </div>
+        {active && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
+            {["Sim","Não"].map(v => (
+              <button key={v} onClick={() => setDesinvSimp(key, v)} style={{
+                padding: "4px 12px", borderRadius: 12, cursor: "pointer", fontSize: 12, fontWeight: 600,
+                border: `1.5px solid ${desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
+                background: desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
+                color: desVal === v ? "#fff" : COLORS.navy, minHeight: 28,
+              }}>{v}</button>
+            ))}
           </div>
         )}
-
-        <button onClick={onClose} style={{ marginTop: 16, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
       </div>
+    );
+  };
+
+  return (
+    <div>
+      {renderMultiplo("cvc", CVC_OPTS, "Cateter Venoso Central", "🔵", COLORS.teal)}
+      {renderMultiplo("arterial", ART_OPTS, "Cateter Arterial", "🔴", COLORS.danger)}
+      {renderSimples("hd", "Cateter de HD", "🟣")}
+      {renderSimples("svd", "SVD", "🟡")}
+      {renderSimples("sne", "SNE", "🟠")}
+      {renderSimples("sng", "SNG", "⚪")}
+      {renderSimples("drenos", "Drenos", "🟤")}
     </div>
   );
 }
 
-// ── Modal editar paciente ─────────────────────────────────────────────────────
+// ── Modal genérico (responsivo) ──────────────────────────────────────────────
+function Modal({ children, onClose, maxWidth = 460 }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(11,37,69,.6)", zIndex: 200,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 12,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, padding: "22px 22px",
+        width: "100%", maxWidth, boxShadow: "0 20px 60px rgba(0,0,0,.25)",
+        maxHeight: "92vh", overflowY: "auto",
+      }}>{children}</div>
+    </div>
+  );
+}
+
+// ── Modal Editar Paciente ────────────────────────────────────────────────────
 function EditPatientModal({ pat, onSave, onClear, onClose }) {
   const [nome,    setNome]    = useState(pat.nome || "");
   const [dataNasc,setNasc]   = useState(pat.dataNasc || "");
@@ -508,106 +452,280 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
   const canSave = nome.trim().length > 0;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(11,37,69,.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: "100%", maxWidth: 460, boxShadow: "0 20px 60px rgba(0,0,0,.25)", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>{pat.leito}</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.navy }}>{pat.nome ? "Editar Paciente" : "Admitir Paciente"}</div>
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
+    <Modal onClose={onClose}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>{pat.leito}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: COLORS.navy }}>{pat.nome ? "Editar Paciente" : "Admitir Paciente"}</div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Nome completo *</div>
+          <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome do paciente"
+            style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 15, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
-            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Nome completo *</div>
-            <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome do paciente"
-              style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Data de nascimento</div>
-              <input type="date" value={dataNasc} onChange={e => setNasc(e.target.value)}
-                style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-              {calcIdade(dataNasc) !== null && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcIdade(dataNasc)} anos</div>}
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Data de admissão</div>
-              <input type="date" value={dataAdm} onChange={e => setAdm(e.target.value)}
-                style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-              {dataAdm && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcDias(dataAdm)} dia(s)</div>}
-            </div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Nascimento</div>
+            <input type="date" value={dataNasc} onChange={e => setNasc(e.target.value)}
+              style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
+            {calcIdade(dataNasc) !== null && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcIdade(dataNasc)} anos</div>}
           </div>
           <div>
-            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Diagnóstico</div>
-            <input value={diag} onChange={e => setDiag(e.target.value)} placeholder="Ex: Sepse pulmonar"
-              style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>Gravidade</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[["alta",COLORS.danger,"⚠ Alta"],["media",COLORS.warn,"◈ Média"],["baixa",COLORS.success,"✓ Baixa"],["livre",COLORS.muted,"Livre"]].map(([v,c,l]) => (
-                <button key={v} onClick={() => setGrav(v)} style={{ padding: "6px 14px", borderRadius: 8, cursor: "pointer", border: `1.5px solid ${grav===v?c:COLORS.border}`, background: grav===v?c+"1A":"#fff", color: grav===v?c:COLORS.navy, fontSize: 13, fontWeight: 700 }}>{l}</button>
-              ))}
-            </div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Admissão UTI</div>
+            <input type="date" value={dataAdm} onChange={e => setAdm(e.target.value)}
+              style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
+            {dataAdm && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcDias(dataAdm)}d</div>}
           </div>
         </div>
-        {pat.nome && (
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
-            {!confirm ? (
-              <button onClick={() => setConfirm(true)} style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🗑 Limpar dados e desocupar leito</button>
-            ) : (
-              <div style={{ background: COLORS.danger+"12", borderRadius: 10, padding: 14 }}>
-                <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 10 }}>Tem certeza? Todos os dados serão apagados.</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => { onClear(pat.id); onClose(); }} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Sim, limpar</button>
-                  <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-                </div>
-              </div>
-            )}
+        <div>
+          <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Diagnóstico</div>
+          <input value={diag} onChange={e => setDiag(e.target.value)} placeholder="Ex: Sepse pulmonar"
+            style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 15, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>Gravidade</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[["alta",COLORS.danger,"⚠ Alta"],["media",COLORS.warn,"◈ Média"],["baixa",COLORS.success,"✓ Baixa"],["livre",COLORS.muted,"Livre"]].map(([v,c,l]) => (
+              <button key={v} onClick={() => setGrav(v)} style={{
+                padding: "8px 14px", borderRadius: 8, cursor: "pointer",
+                border: `1.5px solid ${grav===v?c:COLORS.border}`,
+                background: grav===v?c+"1A":"#fff", color: grav===v?c:COLORS.navy,
+                fontSize: 13, fontWeight: 700, flex: "1 1 auto", minHeight: 36,
+              }}>{l}</button>
+            ))}
           </div>
-        )}
-        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-          <button onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), dataNasc, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
-            style={{ flex: 2, padding: "10px", borderRadius: 10, border: "none", background: canSave ? COLORS.teal : COLORS.border, color: "#fff", fontSize: 14, fontWeight: 700, cursor: canSave ? "pointer" : "not-allowed" }}>✓ Salvar</button>
         </div>
       </div>
-    </div>
+
+      {pat.nome && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
+          {!confirm ? (
+            <button onClick={() => setConfirm(true)} style={{
+              width: "100%", padding: "10px", borderRadius: 8,
+              border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger,
+              fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
+            }}>🗑 Limpar dados e desocupar leito</button>
+          ) : (
+            <div style={{ background: COLORS.danger+"12", borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 10 }}>Tem certeza? Todos os dados serão apagados.</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { onClear(pat.id); onClose(); }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40 }}>Sim, limpar</button>
+                <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 40 }}>Cancelar</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
+        <button onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), dataNasc, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
+          style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: canSave ? COLORS.teal : COLORS.border, color: "#fff", fontSize: 14, fontWeight: 700, cursor: canSave ? "pointer" : "not-allowed", minHeight: 42 }}>✓ Salvar</button>
+      </div>
+    </Modal>
   );
 }
 
-// ── Modal Limpar Todos ────────────────────────────────────────────────────────
+// ── Modal Limpar Todos ───────────────────────────────────────────────────────
 function ClearAllModal({ onConfirm, onClose }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(11,37,69,.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: "100%", maxWidth: 400, textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🗑️</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.navy, marginBottom: 8 }}>Limpar todos os pacientes?</div>
-        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24 }}>Todos os dados e rounds serão apagados permanentemente.</div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-          <button onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 10, border: "none", background: COLORS.danger, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Sim, limpar tudo</button>
+    <Modal onClose={onClose} maxWidth={400}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 44, marginBottom: 12 }}>🗑️</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: COLORS.navy, marginBottom: 8 }}>Limpar todos os pacientes?</div>
+        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 22 }}>Todos os dados e rounds serão apagados permanentemente.</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 10, border: "none", background: COLORS.danger, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42 }}>Sim, limpar</button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
-// ── Patient Card ──────────────────────────────────────────────────────────────
+// ── Modal Relatório WhatsApp ─────────────────────────────────────────────────
+function RelatorioModal({ patients, rounds, onClose, onSave }) {
+  const [tipo, setTipo] = useState("geral");
+  const [copiado, setCopiado] = useState(false);
+  const texto = tipo === "geral"
+    ? gerarRelatorioGeral(patients, rounds)
+    : gerarRelatorioEspecifico(patients, rounds);
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    } catch {
+      alert("Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.");
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={640}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 17, color: COLORS.navy }}>📋 Relatório</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {[["geral","📊 Geral"],["especifico","🛏 Por Paciente"]].map(([v,l]) => (
+          <button key={v} onClick={() => setTipo(v)} style={{
+            padding: "8px 16px", borderRadius: 10,
+            border: `1.5px solid ${tipo === v ? COLORS.teal : COLORS.border}`,
+            background: tipo === v ? COLORS.teal : "#fff",
+            color: tipo === v ? "#fff" : COLORS.navy,
+            fontSize: 13, fontWeight: 600, cursor: "pointer", flex: "1 1 auto", minHeight: 38,
+          }}>{l}</button>
+        ))}
+      </div>
+      <textarea readOnly value={texto} style={{
+        width: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12,
+        fontSize: 12, fontFamily: "monospace", resize: "vertical",
+        background: COLORS.lightBg, color: COLORS.navy, minHeight: 240, maxHeight: "40vh", boxSizing: "border-box",
+      }} />
+      <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+        <button onClick={copiar} style={{
+          flex: "2 1 160px", padding: "11px", borderRadius: 10, border: "none",
+          background: copiado ? COLORS.success : "#25D366", color: "#fff",
+          fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
+        }}>{copiado ? "✓ Copiado!" : "📲 Copiar p/ WhatsApp"}</button>
+        <button onClick={() => exportExcel(patients, rounds)} style={{
+          flex: "1 1 120px", padding: "11px", borderRadius: 10, border: "none",
+          background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
+        }}>📊 Excel</button>
+        <button onClick={() => { onSave(tipo, texto); }} style={{
+          flex: "1 1 100px", padding: "11px", borderRadius: 10, border: "none",
+          background: COLORS.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
+        }}>💾 Salvar</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Modal Histórico ──────────────────────────────────────────────────────────
+function HistoricoModal({ relatorios, onDelete, onClose, isMobile }) {
+  const [sel, setSel] = useState(null);
+  const [confirm, setConfirm] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  const handleDelete = () => {
+    onDelete(sel);
+    setSel(null);
+    setConfirm(false);
+  };
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(sel.texto);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    } catch { alert("Erro ao copiar."); }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={720}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 17, color: COLORS.navy }}>🗂 Histórico (últimos 7 dias)</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+
+      {relatorios.length === 0 ? (
+        <div style={{ textAlign: "center", color: COLORS.muted, padding: 40 }}>Nenhum relatório salvo.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
+          {/* Lista */}
+          <div style={{
+            width: isMobile ? "100%" : 200,
+            maxHeight: isMobile && sel ? 140 : 360,
+            overflowY: "auto",
+            borderRight: isMobile ? "none" : `1px solid ${COLORS.border}`,
+            borderBottom: isMobile ? `1px solid ${COLORS.border}` : "none",
+            paddingRight: isMobile ? 0 : 12,
+            paddingBottom: isMobile ? 12 : 0,
+          }}>
+            {relatorios.map((r, i) => (
+              <div key={r.id || i} onClick={() => { setSel(r); setConfirm(false); }} style={{
+                padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 6,
+                background: sel === r ? COLORS.teal + "18" : COLORS.lightBg,
+                border: `1px solid ${sel === r ? COLORS.teal : COLORS.border}`,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy }}>{r.tipo === "geral" ? "📊 Geral" : "🛏 Por paciente"}</div>
+                <div style={{ fontSize: 11, color: COLORS.muted }}>{r.data}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Conteúdo */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            {sel ? (
+              <>
+                <textarea readOnly value={sel.texto} style={{
+                  width: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12,
+                  fontSize: 12, fontFamily: "monospace", resize: "vertical",
+                  background: COLORS.lightBg, color: COLORS.navy,
+                  minHeight: 200, maxHeight: "40vh", boxSizing: "border-box",
+                }} />
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  <button onClick={handleCopy} style={{
+                    flex: "2 1 140px", padding: "10px", borderRadius: 10, border: "none",
+                    background: copiado ? COLORS.success : "#25D366", color: "#fff",
+                    fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
+                  }}>{copiado ? "✓ Copiado!" : "📲 Copiar"}</button>
+                  <button onClick={() => setConfirm(true)} style={{
+                    flex: "1 1 100px", padding: "10px", borderRadius: 10,
+                    border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger,
+                    fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
+                  }}>🗑 Apagar</button>
+                </div>
+                {confirm && (
+                  <div style={{ marginTop: 10, background: COLORS.danger + "12", borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 8 }}>Apagar este relatório?</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={handleDelete} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 38 }}>Sim, apagar</button>
+                      <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 38 }}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 180, color: COLORS.muted, fontSize: 13 }}>Selecione um relatório</div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Patient Card ─────────────────────────────────────────────────────────────
 function PatientCard({ pat, round, onSelect, onEdit }) {
   const [color, label] = gravBadge(pat.gravidade);
   const alerts = computeAlerts(round, pat);
   const isEmpty = !pat.nome;
+
   return (
-    <div style={{ background: COLORS.card, borderRadius: 14, border: `1.5px solid ${isEmpty ? COLORS.border : color+"44"}`, padding: "14px 16px", position: "relative", overflow: "hidden", boxShadow: "0 2px 8px rgba(11,37,69,.06)" }}>
+    <div style={{
+      background: COLORS.card, borderRadius: 14,
+      border: `1.5px solid ${isEmpty ? COLORS.border : color+"44"}`,
+      padding: "14px 16px", position: "relative", overflow: "hidden",
+      boxShadow: "0 2px 8px rgba(11,37,69,.06)",
+    }}>
       {!isEmpty && <div style={{ position: "absolute", top: 0, left: 0, width: 4, height: "100%", background: color, borderRadius: "14px 0 0 14px" }} />}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginLeft: isEmpty ? 0 : 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted }}>{pat.leito}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, letterSpacing: ".5px" }}>{pat.leito}</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {!isEmpty && <span style={{ fontSize: 11, color, fontWeight: 600, background: color+"18", padding: "2px 8px", borderRadius: 10 }}>{label}</span>}
-          <button onClick={e => { e.stopPropagation(); onEdit(pat.id); }} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "2px 7px", cursor: "pointer", fontSize: 12, color: COLORS.muted }}>{isEmpty ? "＋" : "✏️"}</button>
+          <button onClick={e => { e.stopPropagation(); onEdit(pat.id); }}
+            style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 9px", cursor: "pointer", fontSize: 13, color: COLORS.muted, minHeight: 28 }}>
+            {isEmpty ? "＋" : "✏️"}
+          </button>
         </div>
       </div>
+
       {isEmpty ? (
         <div onClick={() => onEdit(pat.id)} style={{ marginTop: 10, cursor: "pointer" }}>
           <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: 4 }}>Leito disponível</div>
@@ -617,7 +735,7 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
         <div onClick={() => onSelect(pat.id)} style={{ cursor: "pointer" }}>
           <div style={{ marginTop: 6, fontWeight: 700, fontSize: 15, color: COLORS.navy, marginLeft: 8 }}>{pat.nome}</div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2, marginLeft: 8 }}>{pat.diagnostico || "—"}</div>
-          <div style={{ display: "flex", gap: 12, marginTop: 8, marginLeft: 8 }}>
+          <div style={{ display: "flex", gap: 12, marginTop: 8, marginLeft: 8, flexWrap: "wrap" }}>
             {pat.dataAdm && <span style={{ fontSize: 12, color: COLORS.muted }}>🕐 {calcDias(pat.dataAdm)}d</span>}
             {calcIdade(pat.dataNasc) !== null && <span style={{ fontSize: 12, color: COLORS.muted }}>👤 {calcIdade(pat.dataNasc)}a</span>}
           </div>
@@ -627,8 +745,9 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
             </div>
           )}
           <div style={{ marginTop: 8, marginLeft: 8 }}>
-            {round ? <span style={{ fontSize: 11, background: COLORS.success+"20", color: COLORS.success, padding: "2px 8px", borderRadius: 8, fontWeight: 600 }}>✓ Round feito hoje</span>
-                   : <span style={{ fontSize: 11, background: COLORS.warn+"18", color: COLORS.warn, padding: "2px 8px", borderRadius: 8, fontWeight: 600 }}>⏳ Pendente</span>}
+            {round
+              ? <span style={{ fontSize: 11, background: COLORS.success+"20", color: COLORS.success, padding: "2px 8px", borderRadius: 8, fontWeight: 600 }}>✓ Round feito</span>
+              : <span style={{ fontSize: 11, background: COLORS.warn+"18", color: COLORS.warn, padding: "2px 8px", borderRadius: 8, fontWeight: 600 }}>⏳ Pendente</span>}
           </div>
         </div>
       )}
@@ -636,20 +755,33 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
   );
 }
 
-// ── Round Form ────────────────────────────────────────────────────────────────
-function RoundForm({ pat, round, onChange, onBack }) {
+// ── Round Form ───────────────────────────────────────────────────────────────
+function RoundForm({ pat, round, onChange, onBack, isMobile }) {
   const r = round || { ...INITIAL_ROUND };
   const set = (k, v) => onChange({ ...r, [k]: v });
-  const tog = (k, v) => { const a = r[k] || []; onChange({ ...r, [k]: a.includes(v) ? a.filter(x => x !== v) : [...a, v] }); };
+  const tog = (k, v) => {
+    const a = r[k] || [];
+    onChange({ ...r, [k]: a.includes(v) ? a.filter(x => x !== v) : [...a, v] });
+  };
   const s2 = ["Sim","Não"], s3 = ["Sim","Não","Sem indicação"];
+
+  const cardStyle = {
+    background: COLORS.card, borderRadius: 14,
+    padding: isMobile ? "14px 14px" : "18px 20px",
+    marginBottom: 12, border: `1px solid ${COLORS.border}`,
+  };
 
   return (
     <div style={{ maxWidth: 820, margin: "0 auto", paddingBottom: 80 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <button onClick={onBack} style={{ background: "none", border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, color: COLORS.navy, fontWeight: 600 }}>← Voltar</button>
-        <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <button onClick={onBack} style={{
+          background: "none", border: `1.5px solid ${COLORS.border}`, borderRadius: 8,
+          padding: "8px 14px", cursor: "pointer", fontSize: 13, color: COLORS.navy, fontWeight: 600,
+          minHeight: 38,
+        }}>← Voltar</button>
+        <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase" }}>{pat.leito} · Round — {new Date().toLocaleDateString("pt-BR")}</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.navy }}>{pat.nome}</div>
+          <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: COLORS.navy }}>{pat.nome}</div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
             {calcIdade(pat.dataNasc) !== null && `${calcIdade(pat.dataNasc)} anos`}
             {calcIdade(pat.dataNasc) !== null && pat.dataAdm && " · "}
@@ -658,86 +790,88 @@ function RoundForm({ pat, round, onChange, onBack }) {
         </div>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Diagnóstico" icon="🏥" />
         <TInput value={r.diagnostico} onChange={v => set("diagnostico", v)} placeholder="Ex: Sepse pulmonar" />
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Cuidados Gerais" icon="🛡️" />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Grid cols={2} isMobile={isMobile}>
           <Field label="Precaução de contato?">{s2.map(o => <Pill key={o} label={o} selected={r.contato===o} onClick={() => set("contato",o)} />)}</Field>
           <Field label="Visita flexibilizada?">{s2.map(o => <Pill key={o} label={o} selected={r.visitaFlex===o} onClick={() => set("visitaFlex",o)} />)}</Field>
-        </div>
+        </Grid>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Neurológico" icon="🧠" />
         <Field label="Meta de sedação (RASS)">{["-5 a -4","-2 a 0","Não se aplica"].map(o => <Pill key={o} label={o} selected={r.rass===o} onClick={() => set("rass",o)} />)}</Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <Grid cols={3} isMobile={isMobile}>
           <Field label="Controle de dor?">{s2.map(o => <Pill key={o} label={o} selected={r.dor===o} onClick={() => set("dor",o)} />)}</Field>
           <Field label="Delirium?">{s2.map(o => <Pill key={o} label={o} selected={r.delirium===o} onClick={() => set("delirium",o)} />)}</Field>
           <Field label="Contenção mecânica?">{s2.map(o => <Pill key={o} label={o} selected={r.contencao===o} onClick={() => set("contencao",o)} />)}</Field>
-        </div>
+        </Grid>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Cardiovascular / Hemodinâmica" icon="❤️" />
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Suporte hemodinâmico / DVA?">{s2.map(o => <Pill key={o} label={o} selected={r.dva===o} onClick={() => set("dva",o)} />)}</Field>
-          <Field label="Meta de PAM (mmHg)"><TInput value={r.pam} onChange={v => set("pam",v)} placeholder="Ex: 65" w="90px" /></Field>
+          <div style={{ minWidth: 130 }}>
+            <Field label="Meta de PAM (mmHg)"><TInput value={r.pam} onChange={v => set("pam",v)} placeholder="Ex: 65" w="100px" type="number" /></Field>
+          </div>
         </div>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Respiratório / Reabilitação" icon="🫁" />
         <Field label="Suporte respiratório">{["Sem suporte","O2 suplementar","VNI","VM invasiva"].map(o => <Pill key={o} label={o} selected={r.suporteResp===o} onClick={() => set("suporteResp",o)} />)}</Field>
         {(r.suporteResp==="VM invasiva"||r.suporteResp==="VNI") && <Field label="VM protetora?">{s2.map(o => <Pill key={o} label={o} selected={r.vmProtetora===o} onClick={() => set("vmProtetora",o)} />)}</Field>}
         <Field label="Plano de desmame">{["Redução de parâmetros","TRE hoje","Ex-TOT","Sem proposta"].map(o => <MultiPill key={o} label={o} checked={(r.planoDesmame||[]).includes(o)} onChange={() => tog("planoDesmame",o)} />)}</Field>
         <Field label="Preocupações respiratórias">{["Piora respiratória","Piora de secreção","Risco de broncoaspiração"].map(o => <MultiPill key={o} label={o} checked={(r.preocResp||[]).includes(o)} onChange={() => tog("preocResp",o)} color={COLORS.danger} />)}</Field>
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <Field label="Escala IMS"><TInput value={r.ims} onChange={v => set("ims",v)} placeholder="0-10" w="80px" /></Field>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 110 }}><Field label="Escala IMS"><TInput value={r.ims} onChange={v => set("ims",v)} placeholder="0-10" w="90px" type="number" /></Field></div>
           <Field label="Progredir nível funcional?">{s2.map(o => <Pill key={o} label={o} selected={r.progredirFuncional===o} onClick={() => set("progredirFuncional",o)} />)}</Field>
         </div>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Gastrointestinal / Nutrição" icon="🍽️" />
         <Field label="Via alimentar">{["VO","SNE/GTT","NPT","Zero"].map(o => <Pill key={o} label={o} selected={r.viaAlimentar===o} onClick={() => set("viaAlimentar",o)} />)}</Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
           <Field label="Aceitação">{["Normal","Baixa","Intolerância"].map(o => <Pill key={o} label={o} selected={r.aceitacao===o} onClick={() => set("aceitacao",o)} />)}</Field>
           <Field label="Meta calórica?">{s2.map(o => <Pill key={o} label={o} selected={r.metaCalorica===o} onClick={() => set("metaCalorica",o)} />)}</Field>
           <Field label="Avaliação fono?">{s2.map(o => <Pill key={o} label={o} selected={r.fono===o} onClick={() => set("fono",o)} />)}</Field>
           <Field label="Glicemia adequada?">{s2.map(o => <Pill key={o} label={o} selected={r.glicemia===o} onClick={() => set("glicemia",o)} />)}</Field>
           <Field label="Evacuação < 3 dias?">{s2.map(o => <Pill key={o} label={o} selected={r.evacuacao===o} onClick={() => set("evacuacao",o)} />)}</Field>
-        </div>
+        </Grid>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-        <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", border: `1px solid ${COLORS.border}` }}>
+      <Grid cols={2} isMobile={isMobile} gap={12}>
+        <div style={cardStyle}>
           <SecHdr title="Renal" icon="🫘" />
           <Field label="Função renal em piora?">{["Sim","Não","Em HD"].map(o => <Pill key={o} label={o} selected={r.funcaoRenal===o} onClick={() => set("funcaoRenal",o)} />)}</Field>
           <Field label="Meta de balanço hídrico">{["Positivo","Negativo","Neutro"].map(o => <Pill key={o} label={o} selected={r.metaBH===o} onClick={() => set("metaBH",o)} />)}</Field>
         </div>
-        <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", border: `1px solid ${COLORS.border}` }}>
+        <div style={cardStyle}>
           <SecHdr title="Infeccioso" icon="🦠" />
           <Field label="Piora infecciosa?">{s2.map(o => <Pill key={o} label={o} selected={r.pioraInfec===o} onClick={() => set("pioraInfec",o)} />)}</Field>
           <Field label="Em uso de ATB?">{s2.map(o => <Pill key={o} label={o} selected={r.atb===o} onClick={() => set("atb",o)} />)}</Field>
         </div>
-      </div>
+      </Grid>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Profilaxias" icon="💉" />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
           <Field label="Profilaxia TEV">{s3.map(o => <Pill key={o} label={o} selected={r.tev===o} onClick={() => set("tev",o)} color={o==="Não"?COLORS.danger:COLORS.teal} />)}</Field>
           <Field label="Profilaxia LAMG">{s3.map(o => <Pill key={o} label={o} selected={r.lamg===o} onClick={() => set("lamg",o)} />)}</Field>
           <Field label="Úlcera de córnea">{s3.map(o => <Pill key={o} label={o} selected={r.cornea===o} onClick={() => set("cornea",o)} />)}</Field>
           <Field label="Higiene oral">{s3.map(o => <Pill key={o} label={o} selected={r.higieneOral===o} onClick={() => set("higieneOral",o)} />)}</Field>
           <Field label="Decúbito elevado">{s3.map(o => <Pill key={o} label={o} selected={r.decubito===o} onClick={() => set("decubito",o)} />)}</Field>
           <Field label="Bundles OK?">{s2.map(o => <Pill key={o} label={o} selected={r.bundles===o} onClick={() => set("bundles",o)} color={o==="Não"?COLORS.danger:COLORS.teal} />)}</Field>
-        </div>
-        {r.bundles==="Não" && <div style={{ marginTop: 8 }}><Field label="Bundle pendente"><TInput value={r.bundlesPendente} onChange={v => set("bundlesPendente",v)} placeholder="Qual bundle?" /></Field></div>}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginTop: 4 }}>
+        </Grid>
+        {r.bundles==="Não" && <Field label="Bundle pendente"><TInput value={r.bundlesPendente} onChange={v => set("bundlesPendente",v)} placeholder="Qual bundle?" /></Field>}
+        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
           <Field label="Mudança de decúbito?">{s2.map(o => <Pill key={o} label={o} selected={r.mudancaDecubito===o} onClick={() => set("mudancaDecubito",o)} />)}</Field>
           <div>
             <Field label="Lesão por pressão?">{s2.map(o => <Pill key={o} label={o} selected={r.lesaoPressao===o} onClick={() => set("lesaoPressao",o)} color={o==="Sim"?COLORS.danger:COLORS.teal} />)}</Field>
@@ -745,36 +879,38 @@ function RoundForm({ pat, round, onChange, onBack }) {
               <Field label="Avaliação especializada?">{["Comissão curativo","Cirurgia plástica","Não necessário"].map(o => <Pill key={o} label={o} selected={r.avalEspecializada===o} onClick={() => set("avalEspecializada",o)} />)}</Field>
             )}
           </div>
-        </div>
+        </Grid>
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Dispositivos Invasivos" icon="🔌" />
         <DispositivosSection dev={r.dispositivos} onChange={v => set("dispositivos", v)} />
       </div>
 
-      <div style={{ background: COLORS.card, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1px solid ${COLORS.border}` }}>
+      <div style={cardStyle}>
         <SecHdr title="Objetivos de Cuidado e Planejamento" icon="📋" />
         <Field label="Diretivas de cuidado">{["Não RCP","Não HD","Não IOT","Não DVA","Não coletar exames","Sem diretivas"].map(o => <MultiPill key={o} label={o} checked={(r.diretivas||[]).includes(o)} onChange={() => tog("diretivas",o)} color={o==="Sem diretivas"?COLORS.success:COLORS.danger} />)}</Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Grid cols={2} isMobile={isMobile}>
           <div>
             <Field label="Pendência de exame/procedimento?">{s2.map(o => <Pill key={o} label={o} selected={r.pendenciaExame===o} onClick={() => set("pendenciaExame",o)} />)}</Field>
             {r.pendenciaExame==="Sim" && <TArea value={r.descPendencia} onChange={v => set("descPendencia",v)} placeholder="Descreva a pendência..." />}
           </div>
           <Field label="Previsão de alta">{["Hoje","24–48h","> 48h"].map(o => <Pill key={o} label={o} selected={r.previsaoAlta===o} onClick={() => set("previsaoAlta",o)} />)}</Field>
-        </div>
+        </Grid>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <button onClick={onBack} style={{ padding: "10px 24px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-        <button onClick={onBack} style={{ padding: "10px 28px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>✓ Salvar Round</button>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+        <button onClick={onBack} style={{ flex: isMobile ? 1 : "0 0 auto", padding: "12px 24px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 44 }}>Cancelar</button>
+        <button onClick={onBack} style={{ flex: isMobile ? 2 : "0 0 auto", padding: "12px 28px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 44 }}>✓ Salvar Round</button>
       </div>
     </div>
   );
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
+// ── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const isMobile = useIsMobile();
+
   const [patients,      setPatients]      = useState([]);
   const [rounds,        setRounds]        = useState({});
   const [selected,      setSelected]      = useState(null);
@@ -791,7 +927,7 @@ export default function App() {
 
   const dataHoje = hoje();
 
-  // ── Carregar dados ──────────────────────────────────────────────────────────
+  // ── Carregar dados ──
   useEffect(() => {
     async function load() {
       setLoading(true); setError(null);
@@ -802,8 +938,12 @@ export default function App() {
         if (e2) throw e2;
 
         setPatients((pats || []).map(p => ({
-          ...p, nome: p.nome||"", diagnostico: p.diagnostico||"",
-          gravidade: p.gravidade||"livre", dataNasc: p.dataNasc||null, dataAdm: p.dataAdm||null,
+          ...p,
+          nome: p.nome || "",
+          diagnostico: p.diagnostico || "",
+          gravidade: p.gravidade || "livre",
+          dataNasc: p.dataNasc || null,
+          dataAdm: p.dataAdm || null,
         })));
 
         const map = {};
@@ -811,15 +951,14 @@ export default function App() {
           const rd = r.round_data || {};
           if (!rd.dispositivos) rd.dispositivos = INITIAL_DISPOSITIVOS;
           else {
-            if (!rd.dispositivos.cvc) rd.dispositivos.cvc = [];
-            if (!rd.dispositivos.arterial) rd.dispositivos.arterial = [];
+            if (!Array.isArray(rd.dispositivos.cvc)) rd.dispositivos.cvc = [];
+            if (!Array.isArray(rd.dispositivos.arterial)) rd.dispositivos.arterial = [];
             if (!rd.dispositivos.desinvadir) rd.dispositivos.desinvadir = INITIAL_DISPOSITIVOS.desinvadir;
           }
           map[r.patient_id] = rd;
         });
         setRounds(map);
 
-        // Carregar relatórios salvos (últimos 7 dias)
         const seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
         const { data: rels } = await supabase.from("relatorios").select("*").gte("created_at", seteDiasAtras.toISOString()).order("created_at", { ascending: false });
         if (rels) setRelatorios(rels.map(r => ({ id: r.id, tipo: r.tipo, texto: r.texto, data: new Date(r.created_at).toLocaleString("pt-BR") })));
@@ -830,19 +969,49 @@ export default function App() {
       setLoading(false);
     }
     load();
-  }, []);
+  }, [dataHoje]);
 
-  // ── Salvar round ────────────────────────────────────────────────────────────
+  // ── Auto-refresh a cada 30s para sincronizar entre dispositivos ──
+  useEffect(() => {
+    if (selected || editingId || showRelatorio || showHistorico) return;
+    const i = setInterval(async () => {
+      try {
+        const { data: pats } = await supabase.from("patients").select("*").order("id");
+        const { data: rds }  = await supabase.from("rounds").select("*").eq("data", dataHoje);
+        if (pats) setPatients(pats.map(p => ({
+          ...p, nome: p.nome||"", diagnostico: p.diagnostico||"",
+          gravidade: p.gravidade||"livre", dataNasc: p.dataNasc||null, dataAdm: p.dataAdm||null,
+        })));
+        if (rds) {
+          const map = {};
+          rds.forEach(r => {
+            const rd = r.round_data || {};
+            if (!rd.dispositivos) rd.dispositivos = INITIAL_DISPOSITIVOS;
+            map[r.patient_id] = rd;
+          });
+          setRounds(map);
+        }
+      } catch { /* silencioso */ }
+    }, 30000);
+    return () => clearInterval(i);
+  }, [selected, editingId, showRelatorio, showHistorico, dataHoje]);
+
   const handleChange = useCallback(async (r) => {
     setRounds(prev => ({ ...prev, [selected]: r }));
     setSaving(true);
-    await supabase.from("rounds").upsert({ patient_id: selected, data: dataHoje, round_data: r, updated_at: new Date().toISOString() }, { onConflict: "patient_id,data" });
+    await supabase.from("rounds").upsert({
+      patient_id: selected, data: dataHoje, round_data: r, updated_at: new Date().toISOString(),
+    }, { onConflict: "patient_id,data" });
     setSaving(false);
-  }, [selected]);
+  }, [selected, dataHoje]);
 
   const savePatient = async (id, data) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p,...data} : p));
-    await supabase.from("patients").update({ nome: data.nome, dataNasc: data.dataNasc||null, dataAdm: data.dataAdm||null, diagnostico: data.diagnostico, gravidade: data.gravidade, updated_at: new Date().toISOString() }).eq("id", id);
+    await supabase.from("patients").update({
+      nome: data.nome, dataNasc: data.dataNasc||null, dataAdm: data.dataAdm||null,
+      diagnostico: data.diagnostico, gravidade: data.gravidade,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
   };
 
   const clearPatient = async (id) => {
@@ -872,109 +1041,178 @@ export default function App() {
 
   const selPat  = patients.find(p => p.id === selected);
   const editPat = patients.find(p => p.id === editingId);
-  const date = new Date().toLocaleDateString("pt-BR", { weekday:"long", day:"2-digit", month:"long", year:"numeric" });
+  const date = new Date().toLocaleDateString("pt-BR", isMobile
+    ? { day: "2-digit", month: "2-digit", year: "numeric" }
+    : { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
   const withPats   = patients.filter(p => p.nome);
   const roundsDone = withPats.filter(p => rounds[p.id]).length;
   const total      = withPats.length;
+  const totalAlertas = patients.filter(p => computeAlerts(rounds[p.id], p).length > 0).length;
 
   const filtered = patients.filter(p => {
-    if (search) { const q=search.toLowerCase(); if (!p.nome?.toLowerCase().includes(q) && !p.leito?.toLowerCase().includes(q)) return false; }
+    if (search) {
+      const q = search.toLowerCase();
+      if (!p.nome?.toLowerCase().includes(q) && !p.leito?.toLowerCase().includes(q)) return false;
+    }
     if (filter==="pendente" && (!p.nome || rounds[p.id])) return false;
     if (filter==="alta" && p.gravidade!=="alta") return false;
     return true;
   });
 
+  // ── Loading ─────────
   if (loading) return (
-    <div style={{ background:COLORS.bg, minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ textAlign:"center" }}>
-        <div style={{ fontSize:48, marginBottom:16 }}>🏥</div>
-        <div style={{ fontSize:18, fontWeight:700, color:COLORS.navy }}>Carregando dados da UTI...</div>
-        <div style={{ fontSize:13, color:COLORS.muted, marginTop:8 }}>Conectando ao banco de dados</div>
+    <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif", padding: 20 }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🏥</div>
+        <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.navy }}>Carregando dados da UTI...</div>
+        <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 8 }}>Conectando ao banco de dados</div>
       </div>
     </div>
   );
 
   if (error) return (
-    <div style={{ background:COLORS.bg, minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ textAlign:"center", maxWidth:400 }}>
-        <div style={{ fontSize:48, marginBottom:16 }}>⚠️</div>
-        <div style={{ fontSize:18, fontWeight:700, color:COLORS.danger, marginBottom:8 }}>{error}</div>
-        <button onClick={() => window.location.reload()} style={{ padding:"10px 24px", borderRadius:10, border:"none", background:COLORS.teal, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>Tentar novamente</button>
+    <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif", padding: 20 }}>
+      <div style={{ textAlign: "center", maxWidth: 400 }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+        <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.danger, marginBottom: 8 }}>{error}</div>
+        <button onClick={() => window.location.reload()} style={{ padding: "11px 22px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Tentar novamente</button>
       </div>
     </div>
   );
 
+  // ── Tela round ─────────
   if (selected && selPat) return (
-    <div style={{ background:COLORS.bg, minHeight:"100vh", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ background:COLORS.navy, padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>🏥 UTI Clínica — IMIP</div>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          {saving && <span style={{ color:"#8BBBD9", fontSize:12 }}>💾 Salvando...</span>}
-          <div style={{ color:"#8BBBD9", fontSize:13 }}>{date}</div>
+    <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ background: COLORS.navy, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 16 }}>🏥 UTI Clínica — IMIP</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {saving && <span style={{ color: "#8BBBD9", fontSize: 11 }}>💾 Salvando...</span>}
+          <div style={{ color: "#8BBBD9", fontSize: 12 }}>{date}</div>
         </div>
       </div>
-      <div style={{ padding:"24px" }}>
-        <RoundForm pat={selPat} round={rounds[selected]||{...INITIAL_ROUND, diagnostico:selPat.diagnostico||""}} onChange={handleChange} onBack={() => setSelected(null)} />
+      <div style={{ padding: isMobile ? 14 : 24 }}>
+        <RoundForm
+          pat={selPat}
+          round={rounds[selected] || { ...INITIAL_ROUND, diagnostico: selPat.diagnostico || "" }}
+          onChange={handleChange}
+          onBack={() => setSelected(null)}
+          isMobile={isMobile}
+        />
       </div>
     </div>
   );
 
+  // ── Dashboard ──────────
   return (
-    <div style={{ background:COLORS.bg, minHeight:"100vh", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ background:COLORS.navy, padding:"13px 28px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <span style={{ fontSize:22 }}>🏥</span>
-          <div>
-            <div style={{ color:"#fff", fontWeight:800, fontSize:17 }}>UTI Clínica — IMIP</div>
-            <div style={{ color:"#8BBBD9", fontSize:12 }}>Round Multidisciplinar · 10 leitos</div>
+    <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      {/* Top bar */}
+      <div style={{ background: COLORS.navy, padding: isMobile ? "10px 14px" : "13px 28px", position: "sticky", top: 0, zIndex: 50 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: isMobile ? 20 : 22 }}>🏥</span>
+            <div>
+              <div style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 17 }}>UTI Clínica — IMIP</div>
+              <div style={{ color: "#8BBBD9", fontSize: 11 }}>{isMobile ? date : `Round Multidisciplinar · 10 leitos`}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {!isMobile && <div style={{ color: "#8BBBD9", fontSize: 13, marginRight: 4 }}>{date}</div>}
+            <button onClick={() => setShowHistorico(true)} style={{
+              padding: isMobile ? "7px 10px" : "8px 14px", borderRadius: 10,
+              border: `1.5px solid #ffffff33`, background: "transparent", color: "#fff",
+              fontSize: 12, fontWeight: 600, cursor: "pointer", minHeight: 34,
+            }}>🗂 {!isMobile && "Histórico"}</button>
+            <button onClick={() => setShowClearAll(true)} style={{
+              padding: isMobile ? "7px 10px" : "8px 14px", borderRadius: 10,
+              border: `1.5px solid ${COLORS.danger}55`, background: "transparent", color: COLORS.danger,
+              fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 34,
+            }}>🗑 {!isMobile && "Limpar"}</button>
+            <button onClick={() => setShowRelatorio(true)} style={{
+              padding: isMobile ? "7px 12px" : "8px 18px", borderRadius: 10,
+              border: "none", background: COLORS.accent, color: "#fff",
+              fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 34,
+            }}>📋 {isMobile ? "" : "Relatório"}{isMobile && "Relatório"}</button>
           </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-          <div style={{ color:"#8BBBD9", fontSize:13 }}>{date}</div>
-          <button onClick={() => setShowHistorico(true)} style={{ padding:"8px 14px", borderRadius:10, border:`1.5px solid #ffffff33`, background:"transparent", color:"#fff", fontSize:13, fontWeight:600, cursor:"pointer" }}>🗂 Histórico</button>
-          <button onClick={() => setShowClearAll(true)} style={{ padding:"8px 14px", borderRadius:10, border:`1.5px solid ${COLORS.danger}55`, background:"transparent", color:COLORS.danger, fontSize:13, fontWeight:700, cursor:"pointer" }}>🗑 Limpar</button>
-          <button onClick={() => setShowRelatorio(true)} style={{ padding:"8px 18px", borderRadius:10, border:"none", background:COLORS.accent, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>📋 Relatório</button>
-        </div>
       </div>
 
-      <div style={{ padding:"24px 28px" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:20 }}>
-          {[["Leitos ocupados",total,COLORS.navy,"🛏"],["Rounds feitos",roundsDone,COLORS.success,"✅"],["Pendentes",total-roundsDone,COLORS.warn,"⏳"],["Alertas",patients.filter(p=>computeAlerts(rounds[p.id],p).length>0).length,COLORS.danger,"⚠️"]].map(([lbl,val,color,icon]) => (
-            <div key={lbl} style={{ background:"#fff", borderRadius:12, padding:"16px 20px", border:`1px solid ${COLORS.border}` }}>
-              <div style={{ fontSize:22, marginBottom:4 }}>{icon}</div>
-              <div style={{ fontSize:26, fontWeight:800, color }}>{val}</div>
-              <div style={{ fontSize:12, color:COLORS.muted, fontWeight:600 }}>{lbl}</div>
+      <div style={{ padding: isMobile ? "14px 14px" : "24px 28px" }}>
+        {/* Stats */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)",
+          gap: isMobile ? 10 : 14, marginBottom: 16,
+        }}>
+          {[
+            ["Leitos ocupados", total, COLORS.navy, "🛏"],
+            ["Rounds feitos", roundsDone, COLORS.success, "✅"],
+            ["Pendentes", total - roundsDone, COLORS.warn, "⏳"],
+            ["Alertas", totalAlertas, COLORS.danger, "⚠️"],
+          ].map(([lbl, val, color, icon]) => (
+            <div key={lbl} style={{
+              background: "#fff", borderRadius: 12,
+              padding: isMobile ? "12px 14px" : "16px 20px",
+              border: `1px solid ${COLORS.border}`,
+            }}>
+              <div style={{ fontSize: isMobile ? 18 : 22, marginBottom: 4 }}>{icon}</div>
+              <div style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color }}>{val}</div>
+              <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 600 }}>{lbl}</div>
             </div>
           ))}
         </div>
 
-        <div style={{ background:"#fff", borderRadius:12, padding:"14px 20px", border:`1px solid ${COLORS.border}`, marginBottom:20 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:COLORS.navy }}>Progresso do round</span>
-            <span style={{ fontSize:13, color:COLORS.muted }}>{roundsDone}/{total} leitos</span>
+        {/* Progress */}
+        <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", border: `1px solid ${COLORS.border}`, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy }}>Progresso do round</span>
+            <span style={{ fontSize: 13, color: COLORS.muted }}>{roundsDone}/{total} leitos</span>
           </div>
-          <div style={{ background:COLORS.border, borderRadius:8, height:8 }}>
-            <div style={{ width:`${total?(roundsDone/total)*100:0}%`, height:"100%", background:COLORS.teal, borderRadius:8, transition:"width .4s" }} />
+          <div style={{ background: COLORS.border, borderRadius: 8, height: 8 }}>
+            <div style={{ width: `${total ? (roundsDone / total) * 100 : 0}%`, height: "100%", background: COLORS.teal, borderRadius: 8, transition: "width .4s" }} />
           </div>
         </div>
 
-        <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+        {/* Filtros */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar paciente ou leito..."
-            style={{ flex:1, minWidth:200, border:`1.5px solid ${COLORS.border}`, borderRadius:10, padding:"9px 16px", fontSize:14, color:COLORS.navy, outline:"none", background:"#fff" }} />
-          {[["todos","Todos"],["pendente","Pendentes"],["alta","Alta gravidade"]].map(([v,l]) => (
-            <button key={v} onClick={() => setFilter(v)} style={{ padding:"9px 18px", borderRadius:10, border:`1.5px solid ${filter===v?COLORS.teal:COLORS.border}`, background:filter===v?COLORS.teal:"#fff", color:filter===v?"#fff":COLORS.navy, fontSize:13, fontWeight:600, cursor:"pointer" }}>{l}</button>
+            style={{
+              flex: "1 1 200px", minWidth: 140,
+              border: `1.5px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 14px",
+              fontSize: 14, color: COLORS.navy, outline: "none", background: "#fff",
+              minHeight: 40, boxSizing: "border-box",
+            }} />
+          {[["todos","Todos"],["pendente","Pendentes"],["alta","Alta"]].map(([v,l]) => (
+            <button key={v} onClick={() => setFilter(v)} style={{
+              padding: "8px 14px", borderRadius: 10,
+              border: `1.5px solid ${filter===v?COLORS.teal:COLORS.border}`,
+              background: filter===v?COLORS.teal:"#fff",
+              color: filter===v?"#fff":COLORS.navy,
+              fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 40,
+            }}>{l}</button>
           ))}
         </div>
 
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:14 }}>
-          {filtered.map(p => <PatientCard key={p.id} pat={p} round={rounds[p.id]} onSelect={setSelected} onEdit={setEditingId} />)}
+        {/* Grid leitos */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: isMobile
+            ? "repeat(auto-fill, minmax(160px, 1fr))"
+            : "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: isMobile ? 10 : 14,
+        }}>
+          {filtered.length === 0 ? (
+            <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: 40, color: COLORS.muted, fontSize: 14 }}>Nenhum leito encontrado com esse filtro.</div>
+          ) : (
+            filtered.map(p => <PatientCard key={p.id} pat={p} round={rounds[p.id]} onSelect={setSelected} onEdit={setEditingId} />)
+          )}
         </div>
       </div>
 
       {editingId && editPat && <EditPatientModal pat={editPat} onSave={savePatient} onClear={clearPatient} onClose={() => setEditingId(null)} />}
       {showRelatorio && <RelatorioModal patients={patients} rounds={rounds} onClose={() => setShowRelatorio(false)} onSave={salvarRelatorio} />}
-      {showHistorico && <HistoricoModal relatorios={relatorios} onDelete={deletarRelatorio} onClose={() => setShowHistorico(false)} />}
-      {showClearAll  && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
+      {showHistorico && <HistoricoModal relatorios={relatorios} onDelete={deletarRelatorio} onClose={() => setShowHistorico(false)} isMobile={isMobile} />}
+      {showClearAll && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
     </div>
   );
 }
