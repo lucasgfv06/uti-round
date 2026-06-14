@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
 
@@ -921,9 +921,14 @@ export default function App() {
   const [search,        setSearch]        = useState("");
   const [filter,        setFilter]        = useState("todos");
   const [loading,       setLoading]       = useState(true);
-  const [saving,        setSaving]        = useState(false);
+  const [saveStatus,    setSaveStatus]    = useState(""); // "", "saving", "saved", "error"
   const [error,         setError]         = useState(null);
   const [relatorios,    setRelatorios]    = useState([]);
+
+  // Refs para evitar race conditions
+  const pendingRoundRef = useRef({}); // último estado pendente de cada paciente
+  const saveTimeoutRef  = useRef(null);
+  const isSavingRef     = useRef(false);
 
   const dataHoje = hoje();
 
@@ -975,6 +980,8 @@ export default function App() {
   useEffect(() => {
     if (selected || editingId || showRelatorio || showHistorico) return;
     const i = setInterval(async () => {
+      // Não sincroniza se houver alterações pendentes
+      if (Object.keys(pendingRoundRef.current).length > 0 || isSavingRef.current) return;
       try {
         const { data: pats } = await supabase.from("patients").select("*").order("id");
         const { data: rds }  = await supabase.from("rounds").select("*").eq("data", dataHoje);
@@ -987,6 +994,11 @@ export default function App() {
           rds.forEach(r => {
             const rd = r.round_data || {};
             if (!rd.dispositivos) rd.dispositivos = INITIAL_DISPOSITIVOS;
+            else {
+              if (!Array.isArray(rd.dispositivos.cvc)) rd.dispositivos.cvc = [];
+              if (!Array.isArray(rd.dispositivos.arterial)) rd.dispositivos.arterial = [];
+              if (!rd.dispositivos.desinvadir) rd.dispositivos.desinvadir = INITIAL_DISPOSITIVOS.desinvadir;
+            }
             map[r.patient_id] = rd;
           });
           setRounds(map);
@@ -996,14 +1008,73 @@ export default function App() {
     return () => clearInterval(i);
   }, [selected, editingId, showRelatorio, showHistorico, dataHoje]);
 
-  const handleChange = useCallback(async (r) => {
+  // Salvar com debounce + retry. Sempre envia o estado mais recente.
+  const flushSave = useCallback(async (patientId) => {
+    if (isSavingRef.current) return;
+    const dadosParaSalvar = pendingRoundRef.current[patientId];
+    if (!dadosParaSalvar) return;
+
+    isSavingRef.current = true;
+    setSaveStatus("saving");
+
+    let tentativas = 0;
+    let sucesso = false;
+    while (tentativas < 3 && !sucesso) {
+      try {
+        const { error: err } = await supabase.from("rounds").upsert({
+          patient_id: patientId,
+          data: dataHoje,
+          round_data: dadosParaSalvar,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "patient_id,data" });
+        if (err) throw err;
+        sucesso = true;
+      } catch (e) {
+        tentativas++;
+        if (tentativas < 3) await new Promise(r => setTimeout(r, 800 * tentativas));
+      }
+    }
+
+    isSavingRef.current = false;
+
+    if (sucesso) {
+      // Verifica se houve nova alteração enquanto salvava — se sim, salva de novo
+      if (pendingRoundRef.current[patientId] !== dadosParaSalvar) {
+        flushSave(patientId);
+      } else {
+        delete pendingRoundRef.current[patientId];
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus(""), 1500);
+      }
+    } else {
+      setSaveStatus("error");
+    }
+  }, [dataHoje]);
+
+  const handleChange = useCallback((r) => {
+    // Atualiza estado local imediatamente
     setRounds(prev => ({ ...prev, [selected]: r }));
-    setSaving(true);
-    await supabase.from("rounds").upsert({
-      patient_id: selected, data: dataHoje, round_data: r, updated_at: new Date().toISOString(),
-    }, { onConflict: "patient_id,data" });
-    setSaving(false);
-  }, [selected, dataHoje]);
+    // Guarda última versão para salvar
+    pendingRoundRef.current[selected] = r;
+
+    // Debounce: cancela timer anterior e agenda novo save em 600ms
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      flushSave(selected);
+    }, 600);
+  }, [selected, flushSave]);
+
+  // Salvar imediatamente ao sair do round (não esperar debounce)
+  const handleBackFromRound = useCallback(async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (selected && pendingRoundRef.current[selected]) {
+      await flushSave(selected);
+    }
+    setSelected(null);
+  }, [selected, flushSave]);
 
   const savePatient = async (id, data) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p,...data} : p));
@@ -1084,10 +1155,12 @@ export default function App() {
   // ── Tela round ─────────
   if (selected && selPat) return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ background: COLORS.navy, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div style={{ background: COLORS.navy, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 16 }}>🏥 UTI Clínica — IMIP</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {saving && <span style={{ color: "#8BBBD9", fontSize: 11 }}>💾 Salvando...</span>}
+          {saveStatus === "saving" && <span style={{ color: "#FFD54F", fontSize: 11, fontWeight: 600 }}>💾 Salvando...</span>}
+          {saveStatus === "saved"  && <span style={{ color: "#7FEFA7", fontSize: 11, fontWeight: 600 }}>✓ Salvo</span>}
+          {saveStatus === "error"  && <span style={{ color: "#FF6B6B", fontSize: 11, fontWeight: 600 }}>⚠ Erro ao salvar</span>}
           <div style={{ color: "#8BBBD9", fontSize: 12 }}>{date}</div>
         </div>
       </div>
@@ -1096,7 +1169,7 @@ export default function App() {
           pat={selPat}
           round={rounds[selected] || { ...INITIAL_ROUND, diagnostico: selPat.diagnostico || "" }}
           onChange={handleChange}
-          onBack={() => setSelected(null)}
+          onBack={handleBackFromRound}
           isMobile={isMobile}
         />
       </div>
