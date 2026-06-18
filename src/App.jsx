@@ -35,7 +35,29 @@ const INITIAL_ROUND = {
   diagnostico: "",
 };
 
-// ── Hook para detectar mobile ────────────────────────────────────────────────
+// Normaliza estrutura para evitar erros com rounds antigos do banco
+function normalizarRound(r) {
+  if (!r) return null;
+  const out = { ...INITIAL_ROUND, ...r };
+  if (!out.dispositivos) out.dispositivos = INITIAL_DISPOSITIVOS;
+  else {
+    out.dispositivos = { ...INITIAL_DISPOSITIVOS, ...out.dispositivos };
+    if (!Array.isArray(out.dispositivos.cvc)) out.dispositivos.cvc = [];
+    if (!Array.isArray(out.dispositivos.arterial)) out.dispositivos.arterial = [];
+    if (!out.dispositivos.desinvadir) out.dispositivos.desinvadir = INITIAL_DISPOSITIVOS.desinvadir;
+    else {
+      out.dispositivos.desinvadir = { ...INITIAL_DISPOSITIVOS.desinvadir, ...out.dispositivos.desinvadir };
+      if (!out.dispositivos.desinvadir.cvc || typeof out.dispositivos.desinvadir.cvc !== "object") out.dispositivos.desinvadir.cvc = {};
+      if (!out.dispositivos.desinvadir.arterial || typeof out.dispositivos.desinvadir.arterial !== "object") out.dispositivos.desinvadir.arterial = {};
+    }
+  }
+  if (!Array.isArray(out.planoDesmame)) out.planoDesmame = [];
+  if (!Array.isArray(out.preocResp)) out.preocResp = [];
+  if (!Array.isArray(out.diretivas)) out.diretivas = [];
+  return out;
+}
+
+// ── Hook mobile ──────────────────────────────────────────────────────────────
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < 700 : false);
   useEffect(() => {
@@ -46,7 +68,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-function hoje() { return new Date().toISOString().slice(0, 10); }
+function hojeStr() { return new Date().toISOString().slice(0, 10); }
 
 function calcIdade(d) {
   if (!d) return null;
@@ -83,7 +105,6 @@ function computeAlerts(r, p) {
   return a;
 }
 
-// ── Helpers de dispositivos ──────────────────────────────────────────────────
 function listarDispositivos(dev) {
   if (!dev) return "Nenhum";
   const partes = [];
@@ -145,10 +166,7 @@ function simNaoEmoji(v) { return v === "Sim" ? "✅" : v === "Não" ? "❌" : "�
 function gerarRelatorioEspecifico(patients, rounds) {
   const ocupados = patients.filter(p => p.nome);
   const dt = new Date().toLocaleDateString("pt-BR") + " — " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-
-  if (ocupados.length === 0) {
-    return `🏥 *ROUND UTI CLÍNICA — IMIP*\n📅 *${dt}*\n\nNenhum paciente admitido.`;
-  }
+  if (ocupados.length === 0) return `🏥 *ROUND UTI CLÍNICA — IMIP*\n📅 *${dt}*\n\nNenhum paciente admitido.`;
 
   const blocos = ocupados.map(p => {
     const r = rounds[p.id];
@@ -180,7 +198,7 @@ ${blocos.join("\n\n━━━━━━━━━━━━━━━━━\n")}
 📊 _Gerado pelo UTI Round — IMIP_`;
 }
 
-// ── Exportar Excel ───────────────────────────────────────────────────────────
+// ── Excel ────────────────────────────────────────────────────────────────────
 function exportExcel(patients, rounds) {
   const rows = patients.filter(p => p.nome);
   if (!rows.length) { alert("Nenhum paciente para exportar."); return; }
@@ -210,9 +228,9 @@ function exportExcel(patients, rounds) {
       "Mudança Decúbito": r.mudancaDecubito || "", "LPP": r.lesaoPressao || "",
       "Aval Especializada": r.avalEspecializada || "",
       "CVC": (dev.cvc || []).join(" | "),
-      "CVC Desinvadir": Object.entries(dev.desinvadir?.cvc || {}).filter(([_, v]) => v).map(([k]) => k).join(", "),
+      "CVC Desinvadir": Object.entries(dev.desinvadir?.cvc || {}).filter(([_, v]) => v === "Sim").map(([k]) => k).join(", "),
       "Cateter Arterial": (dev.arterial || []).join(" | "),
-      "Art Desinvadir": Object.entries(dev.desinvadir?.arterial || {}).filter(([_, v]) => v).map(([k]) => k).join(", "),
+      "Art Desinvadir": Object.entries(dev.desinvadir?.arterial || {}).filter(([_, v]) => v === "Sim").map(([k]) => k).join(", "),
       "HD": dev.hd ? "Sim" : "Não", "HD Desinvadir": dev.desinvadir?.hd ?? "",
       "SVD": dev.svd ? "Sim" : "Não", "SVD Desinvadir": dev.desinvadir?.svd ?? "",
       "SNE": dev.sne ? "Sim" : "Não", "SNE Desinvadir": dev.desinvadir?.sne ?? "",
@@ -228,13 +246,13 @@ function exportExcel(patients, rounds) {
   ws["!cols"] = Object.keys(data[0]).map(() => ({ wch: 20 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Round UTI");
-  XLSX.writeFile(wb, `round-uti-${hoje()}.xlsx`);
+  XLSX.writeFile(wb, `round-uti-${hojeStr()}.xlsx`);
 }
 
 // ── Atoms ────────────────────────────────────────────────────────────────────
 function Pill({ label, selected, onClick, color }) {
   return (
-    <button onClick={onClick} style={{
+    <button type="button" onClick={onClick} style={{
       padding: "7px 14px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap",
       border: `1.5px solid ${selected ? (color || COLORS.teal) : COLORS.border}`,
       background: selected ? (color || COLORS.teal) : "#fff",
@@ -244,10 +262,9 @@ function Pill({ label, selected, onClick, color }) {
     }}>{label}</button>
   );
 }
-
 function MultiPill({ label, checked, onChange, color }) {
   return (
-    <button onClick={() => onChange(!checked)} style={{
+    <button type="button" onClick={() => onChange(!checked)} style={{
       padding: "7px 14px", borderRadius: 20, cursor: "pointer",
       border: `1.5px solid ${checked ? (color || COLORS.accent) : COLORS.border}`,
       background: checked ? (color || COLORS.accent) : "#fff",
@@ -257,7 +274,6 @@ function MultiPill({ label, checked, onChange, color }) {
     }}>{label}</button>
   );
 }
-
 function SecHdr({ title, icon }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, marginTop: 4 }}>
@@ -267,7 +283,6 @@ function SecHdr({ title, icon }) {
     </div>
   );
 }
-
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -276,7 +291,6 @@ function Field({ label, children }) {
     </div>
   );
 }
-
 function TInput({ value, onChange, placeholder, w, type = "text" }) {
   return (
     <input type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
@@ -287,7 +301,6 @@ function TInput({ value, onChange, placeholder, w, type = "text" }) {
       }} />
   );
 }
-
 function TArea({ value, onChange, placeholder, rows = 2 }) {
   return (
     <textarea value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
@@ -298,8 +311,6 @@ function TArea({ value, onChange, placeholder, rows = 2 }) {
       }} />
   );
 }
-
-// Grid responsivo (cols no desktop, 1 no mobile)
 function Grid({ cols = 2, children, isMobile, gap = 14 }) {
   return (
     <div style={{
@@ -310,7 +321,23 @@ function Grid({ cols = 2, children, isMobile, gap = 14 }) {
   );
 }
 
-// ── Seção Dispositivos ───────────────────────────────────────────────────────
+// ── Modal genérico ───────────────────────────────────────────────────────────
+function Modal({ children, onClose, maxWidth = 460 }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(11,37,69,.6)", zIndex: 200,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 12,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, padding: "22px",
+        width: "100%", maxWidth, boxShadow: "0 20px 60px rgba(0,0,0,.25)",
+        maxHeight: "92vh", overflowY: "auto",
+      }}>{children}</div>
+    </div>
+  );
+}
+
+// ── Dispositivos ─────────────────────────────────────────────────────────────
 function DispositivosSection({ dev, onChange }) {
   const d = dev || INITIAL_DISPOSITIVOS;
 
@@ -321,19 +348,14 @@ function DispositivosSection({ dev, onChange }) {
     if (!novo.includes(opt)) delete desKey[opt];
     onChange({ ...d, [key]: novo, desinvadir: { ...d.desinvadir, [key]: desKey } });
   };
-
   const toggleSimples = (key) => {
     const novoValor = !d[key];
     onChange({ ...d, [key]: novoValor, desinvadir: { ...d.desinvadir, [key]: novoValor ? d.desinvadir?.[key] : null } });
   };
-
-  const setDesinvArr = (key, opt, val) => {
+  const setDesinvArr = (key, opt, val) =>
     onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: { ...(d.desinvadir?.[key] || {}), [opt]: val } } });
-  };
-
-  const setDesinvSimp = (key, val) => {
+  const setDesinvSimp = (key, val) =>
     onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: val } });
-  };
 
   const boxStyle = (active) => ({
     background: active ? COLORS.teal + "12" : COLORS.lightBg,
@@ -350,12 +372,11 @@ function DispositivosSection({ dev, onChange }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy, marginBottom: 8 }}>{icon} {label}</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: lista.length ? 8 : 0 }}>
           {opts.map(opt => (
-            <button key={opt} onClick={() => toggleArr(key, opt)} style={{
+            <button type="button" key={opt} onClick={() => toggleArr(key, opt)} style={{
               padding: "6px 12px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 600,
               border: `1.5px solid ${lista.includes(opt) ? color : COLORS.border}`,
               background: lista.includes(opt) ? color : "#fff",
-              color: lista.includes(opt) ? "#fff" : COLORS.navy,
-              minHeight: 30,
+              color: lista.includes(opt) ? "#fff" : COLORS.navy, minHeight: 30,
             }}>{opt}</button>
           ))}
         </div>
@@ -366,12 +387,11 @@ function DispositivosSection({ dev, onChange }) {
               <span style={{ fontSize: 12, color, fontWeight: 700, minWidth: 44 }}>{opt}</span>
               <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
               {["Sim","Não"].map(v => (
-                <button key={v} onClick={() => setDesinvArr(key, opt, v)} style={{
+                <button type="button" key={v} onClick={() => setDesinvArr(key, opt, v)} style={{
                   padding: "4px 12px", borderRadius: 12, cursor: "pointer", fontSize: 12, fontWeight: 600,
                   border: `1.5px solid ${desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
                   background: desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
-                  color: desVal === v ? "#fff" : COLORS.navy,
-                  minHeight: 28,
+                  color: desVal === v ? "#fff" : COLORS.navy, minHeight: 28,
                 }}>{v}</button>
               ))}
             </div>
@@ -387,7 +407,7 @@ function DispositivosSection({ dev, onChange }) {
     return (
       <div style={boxStyle(active)}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={() => toggleSimples(key)} style={{
+          <button type="button" onClick={() => toggleSimples(key)} style={{
             padding: "6px 14px", borderRadius: 16, cursor: "pointer", fontSize: 12, fontWeight: 700,
             border: `1.5px solid ${active ? COLORS.teal : COLORS.border}`,
             background: active ? COLORS.teal : "#fff",
@@ -399,7 +419,7 @@ function DispositivosSection({ dev, onChange }) {
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: COLORS.muted }}>Desinvadir?</span>
             {["Sim","Não"].map(v => (
-              <button key={v} onClick={() => setDesinvSimp(key, v)} style={{
+              <button type="button" key={v} onClick={() => setDesinvSimp(key, v)} style={{
                 padding: "4px 12px", borderRadius: 12, cursor: "pointer", fontSize: 12, fontWeight: 600,
                 border: `1.5px solid ${desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : COLORS.border}`,
                 background: desVal === v ? (v === "Sim" ? COLORS.success : COLORS.danger) : "#fff",
@@ -425,23 +445,7 @@ function DispositivosSection({ dev, onChange }) {
   );
 }
 
-// ── Modal genérico (responsivo) ──────────────────────────────────────────────
-function Modal({ children, onClose, maxWidth = 460 }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(11,37,69,.6)", zIndex: 200,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 12,
-    }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: 16, padding: "22px 22px",
-        width: "100%", maxWidth, boxShadow: "0 20px 60px rgba(0,0,0,.25)",
-        maxHeight: "92vh", overflowY: "auto",
-      }}>{children}</div>
-    </div>
-  );
-}
-
-// ── Modal Editar Paciente ────────────────────────────────────────────────────
+// ── Modais ───────────────────────────────────────────────────────────────────
 function EditPatientModal({ pat, onSave, onClear, onClose }) {
   const [nome,    setNome]    = useState(pat.nome || "");
   const [dataNasc,setNasc]   = useState(pat.dataNasc || "");
@@ -458,7 +462,7 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
           <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>{pat.leito}</div>
           <div style={{ fontSize: 17, fontWeight: 800, color: COLORS.navy }}>{pat.nome ? "Editar Paciente" : "Admitir Paciente"}</div>
         </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+        <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -490,7 +494,7 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
           <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>Gravidade</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[["alta",COLORS.danger,"⚠ Alta"],["media",COLORS.warn,"◈ Média"],["baixa",COLORS.success,"✓ Baixa"],["livre",COLORS.muted,"Livre"]].map(([v,c,l]) => (
-              <button key={v} onClick={() => setGrav(v)} style={{
+              <button type="button" key={v} onClick={() => setGrav(v)} style={{
                 padding: "8px 14px", borderRadius: 8, cursor: "pointer",
                 border: `1.5px solid ${grav===v?c:COLORS.border}`,
                 background: grav===v?c+"1A":"#fff", color: grav===v?c:COLORS.navy,
@@ -504,7 +508,7 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
       {pat.nome && (
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
           {!confirm ? (
-            <button onClick={() => setConfirm(true)} style={{
+            <button type="button" onClick={() => setConfirm(true)} style={{
               width: "100%", padding: "10px", borderRadius: 8,
               border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger,
               fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
@@ -513,8 +517,8 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
             <div style={{ background: COLORS.danger+"12", borderRadius: 10, padding: 12 }}>
               <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 10 }}>Tem certeza? Todos os dados serão apagados.</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => { onClear(pat.id); onClose(); }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40 }}>Sim, limpar</button>
-                <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 40 }}>Cancelar</button>
+                <button type="button" onClick={() => { onClear(pat.id); onClose(); }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40 }}>Sim, limpar</button>
+                <button type="button" onClick={() => setConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 40 }}>Cancelar</button>
               </div>
             </div>
           )}
@@ -522,58 +526,49 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
       )}
 
       <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-        <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
-        <button onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), dataNasc, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
+        <button type="button" onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
+        <button type="button" onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), dataNasc, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
           style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: canSave ? COLORS.teal : COLORS.border, color: "#fff", fontSize: 14, fontWeight: 700, cursor: canSave ? "pointer" : "not-allowed", minHeight: 42 }}>✓ Salvar</button>
       </div>
     </Modal>
   );
 }
 
-// ── Modal Limpar Todos ───────────────────────────────────────────────────────
-function ClearAllModal({ onConfirm, onClose }) {
+function ConfirmModal({ icon, title, message, confirmLabel, confirmColor, onConfirm, onClose }) {
   return (
     <Modal onClose={onClose} maxWidth={400}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 44, marginBottom: 12 }}>🗑️</div>
-        <div style={{ fontSize: 19, fontWeight: 800, color: COLORS.navy, marginBottom: 8 }}>Limpar todos os pacientes?</div>
-        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 22 }}>Todos os dados e rounds serão apagados permanentemente.</div>
+        <div style={{ fontSize: 44, marginBottom: 12 }}>{icon}</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: COLORS.navy, marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 14, color: COLORS.muted, marginBottom: 22 }}>{message}</div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
-          <button onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 10, border: "none", background: COLORS.danger, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42 }}>Sim, limpar</button>
+          <button type="button" onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
+          <button type="button" onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 10, border: "none", background: confirmColor || COLORS.danger, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42 }}>{confirmLabel}</button>
         </div>
       </div>
     </Modal>
   );
 }
 
-// ── Modal Relatório WhatsApp ─────────────────────────────────────────────────
 function RelatorioModal({ patients, rounds, onClose, onSave }) {
   const [tipo, setTipo] = useState("geral");
   const [copiado, setCopiado] = useState(false);
-  const texto = tipo === "geral"
-    ? gerarRelatorioGeral(patients, rounds)
-    : gerarRelatorioEspecifico(patients, rounds);
+  const texto = tipo === "geral" ? gerarRelatorioGeral(patients, rounds) : gerarRelatorioEspecifico(patients, rounds);
 
   const copiar = async () => {
-    try {
-      await navigator.clipboard.writeText(texto);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2000);
-    } catch {
-      alert("Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.");
-    }
+    try { await navigator.clipboard.writeText(texto); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
+    catch { alert("Não foi possível copiar. Selecione o texto manualmente."); }
   };
 
   return (
     <Modal onClose={onClose} maxWidth={640}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontWeight: 800, fontSize: 17, color: COLORS.navy }}>📋 Relatório</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+        <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {[["geral","📊 Geral"],["especifico","🛏 Por Paciente"]].map(([v,l]) => (
-          <button key={v} onClick={() => setTipo(v)} style={{
+          <button type="button" key={v} onClick={() => setTipo(v)} style={{
             padding: "8px 16px", borderRadius: 10,
             border: `1.5px solid ${tipo === v ? COLORS.teal : COLORS.border}`,
             background: tipo === v ? COLORS.teal : "#fff",
@@ -588,16 +583,16 @@ function RelatorioModal({ patients, rounds, onClose, onSave }) {
         background: COLORS.lightBg, color: COLORS.navy, minHeight: 240, maxHeight: "40vh", boxSizing: "border-box",
       }} />
       <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-        <button onClick={copiar} style={{
+        <button type="button" onClick={copiar} style={{
           flex: "2 1 160px", padding: "11px", borderRadius: 10, border: "none",
           background: copiado ? COLORS.success : "#25D366", color: "#fff",
           fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
         }}>{copiado ? "✓ Copiado!" : "📲 Copiar p/ WhatsApp"}</button>
-        <button onClick={() => exportExcel(patients, rounds)} style={{
+        <button type="button" onClick={() => exportExcel(patients, rounds)} style={{
           flex: "1 1 120px", padding: "11px", borderRadius: 10, border: "none",
           background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
         }}>📊 Excel</button>
-        <button onClick={() => { onSave(tipo, texto); }} style={{
+        <button type="button" onClick={() => { onSave(tipo, texto); }} style={{
           flex: "1 1 100px", padding: "11px", borderRadius: 10, border: "none",
           background: COLORS.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
         }}>💾 Salvar</button>
@@ -606,45 +601,34 @@ function RelatorioModal({ patients, rounds, onClose, onSave }) {
   );
 }
 
-// ── Modal Histórico ──────────────────────────────────────────────────────────
 function HistoricoModal({ relatorios, onDelete, onClose, isMobile }) {
   const [sel, setSel] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [copiado, setCopiado] = useState(false);
 
-  const handleDelete = () => {
-    onDelete(sel);
-    setSel(null);
-    setConfirm(false);
-  };
+  const handleDelete = () => { onDelete(sel); setSel(null); setConfirm(false); };
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(sel.texto);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2000);
-    } catch { alert("Erro ao copiar."); }
+    try { await navigator.clipboard.writeText(sel.texto); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
+    catch { alert("Erro ao copiar."); }
   };
 
   return (
     <Modal onClose={onClose} maxWidth={720}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontWeight: 800, fontSize: 17, color: COLORS.navy }}>🗂 Histórico (últimos 7 dias)</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
+        <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: COLORS.muted, lineHeight: 1, padding: 0 }}>×</button>
       </div>
-
       {relatorios.length === 0 ? (
         <div style={{ textAlign: "center", color: COLORS.muted, padding: 40 }}>Nenhum relatório salvo.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          {/* Lista */}
           <div style={{
             width: isMobile ? "100%" : 200,
             maxHeight: isMobile && sel ? 140 : 360,
             overflowY: "auto",
             borderRight: isMobile ? "none" : `1px solid ${COLORS.border}`,
             borderBottom: isMobile ? `1px solid ${COLORS.border}` : "none",
-            paddingRight: isMobile ? 0 : 12,
-            paddingBottom: isMobile ? 12 : 0,
+            paddingRight: isMobile ? 0 : 12, paddingBottom: isMobile ? 12 : 0,
           }}>
             {relatorios.map((r, i) => (
               <div key={r.id || i} onClick={() => { setSel(r); setConfirm(false); }} style={{
@@ -657,8 +641,6 @@ function HistoricoModal({ relatorios, onDelete, onClose, isMobile }) {
               </div>
             ))}
           </div>
-
-          {/* Conteúdo */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
             {sel ? (
               <>
@@ -669,12 +651,12 @@ function HistoricoModal({ relatorios, onDelete, onClose, isMobile }) {
                   minHeight: 200, maxHeight: "40vh", boxSizing: "border-box",
                 }} />
                 <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <button onClick={handleCopy} style={{
+                  <button type="button" onClick={handleCopy} style={{
                     flex: "2 1 140px", padding: "10px", borderRadius: 10, border: "none",
                     background: copiado ? COLORS.success : "#25D366", color: "#fff",
                     fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
                   }}>{copiado ? "✓ Copiado!" : "📲 Copiar"}</button>
-                  <button onClick={() => setConfirm(true)} style={{
+                  <button type="button" onClick={() => setConfirm(true)} style={{
                     flex: "1 1 100px", padding: "10px", borderRadius: 10,
                     border: `1.5px solid ${COLORS.danger}`, background: "#fff", color: COLORS.danger,
                     fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
@@ -684,8 +666,8 @@ function HistoricoModal({ relatorios, onDelete, onClose, isMobile }) {
                   <div style={{ marginTop: 10, background: COLORS.danger + "12", borderRadius: 10, padding: 12 }}>
                     <div style={{ fontSize: 13, color: COLORS.danger, fontWeight: 700, marginBottom: 8 }}>Apagar este relatório?</div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={handleDelete} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 38 }}>Sim, apagar</button>
-                      <button onClick={() => setConfirm(false)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 38 }}>Cancelar</button>
+                      <button type="button" onClick={handleDelete} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 38 }}>Sim, apagar</button>
+                      <button type="button" onClick={() => setConfirm(false)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 38 }}>Cancelar</button>
                     </div>
                   </div>
                 )}
@@ -714,18 +696,16 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
       boxShadow: "0 2px 8px rgba(11,37,69,.06)",
     }}>
       {!isEmpty && <div style={{ position: "absolute", top: 0, left: 0, width: 4, height: "100%", background: color, borderRadius: "14px 0 0 14px" }} />}
-
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginLeft: isEmpty ? 0 : 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, letterSpacing: ".5px" }}>{pat.leito}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted }}>{pat.leito}</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {!isEmpty && <span style={{ fontSize: 11, color, fontWeight: 600, background: color+"18", padding: "2px 8px", borderRadius: 10 }}>{label}</span>}
-          <button onClick={e => { e.stopPropagation(); onEdit(pat.id); }}
+          <button type="button" onClick={e => { e.stopPropagation(); onEdit(pat.id); }}
             style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 9px", cursor: "pointer", fontSize: 13, color: COLORS.muted, minHeight: 28 }}>
             {isEmpty ? "＋" : "✏️"}
           </button>
         </div>
       </div>
-
       {isEmpty ? (
         <div onClick={() => onEdit(pat.id)} style={{ marginTop: 10, cursor: "pointer" }}>
           <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: 4 }}>Leito disponível</div>
@@ -756,7 +736,8 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
 }
 
 // ── Round Form ───────────────────────────────────────────────────────────────
-function RoundForm({ pat, round, onChange, onBack, isMobile }) {
+function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveStatus }) {
+  const [confirmNovo, setConfirmNovo] = useState(false);
   const r = round || { ...INITIAL_ROUND };
   const set = (k, v) => onChange({ ...r, [k]: v });
   const tog = (k, v) => {
@@ -774,7 +755,7 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
   return (
     <div style={{ maxWidth: 820, margin: "0 auto", paddingBottom: 80 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        <button onClick={onBack} style={{
+        <button type="button" onClick={onBack} style={{
           background: "none", border: `1.5px solid ${COLORS.border}`, borderRadius: 8,
           padding: "8px 14px", cursor: "pointer", fontSize: 13, color: COLORS.navy, fontWeight: 600,
           minHeight: 38,
@@ -788,7 +769,29 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
             {pat.dataAdm && `${calcDias(pat.dataAdm)} dia(s) internado`}
           </div>
         </div>
+        <button type="button" onClick={() => setConfirmNovo(true)} style={{
+          padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${COLORS.warn}`,
+          background: "#fff", color: COLORS.warn, fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 38,
+        }}>🔄 Novo Round</button>
       </div>
+
+      {confirmNovo && (
+        <div style={{ background: COLORS.warn+"18", border: `1.5px solid ${COLORS.warn}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.warn, marginBottom: 10 }}>
+            ⚠️ Iniciar novo round? Todos os campos do checklist serão zerados (o paciente continua admitido).
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => { onNovoRound(); setConfirmNovo(false); }} style={{
+              flex: 1, padding: "10px", borderRadius: 8, border: "none",
+              background: COLORS.warn, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40,
+            }}>Sim, novo round</button>
+            <button type="button" onClick={() => setConfirmNovo(false)} style={{
+              flex: 1, padding: "10px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`,
+              background: "#fff", color: COLORS.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 40,
+            }}>Cancelar</button>
+          </div>
+        </div>
+      )}
 
       <div style={cardStyle}>
         <SecHdr title="Diagnóstico" icon="🏥" />
@@ -838,7 +841,7 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
       <div style={cardStyle}>
         <SecHdr title="Gastrointestinal / Nutrição" icon="🍽️" />
         <Field label="Via alimentar">{["VO","SNE/GTT","NPT","Zero"].map(o => <Pill key={o} label={o} selected={r.viaAlimentar===o} onClick={() => set("viaAlimentar",o)} />)}</Field>
-        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
+        <Grid cols={2} isMobile={isMobile}>
           <Field label="Aceitação">{["Normal","Baixa","Intolerância"].map(o => <Pill key={o} label={o} selected={r.aceitacao===o} onClick={() => set("aceitacao",o)} />)}</Field>
           <Field label="Meta calórica?">{s2.map(o => <Pill key={o} label={o} selected={r.metaCalorica===o} onClick={() => set("metaCalorica",o)} />)}</Field>
           <Field label="Avaliação fono?">{s2.map(o => <Pill key={o} label={o} selected={r.fono===o} onClick={() => set("fono",o)} />)}</Field>
@@ -862,7 +865,7 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
 
       <div style={cardStyle}>
         <SecHdr title="Profilaxias" icon="💉" />
-        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
+        <Grid cols={2} isMobile={isMobile}>
           <Field label="Profilaxia TEV">{s3.map(o => <Pill key={o} label={o} selected={r.tev===o} onClick={() => set("tev",o)} color={o==="Não"?COLORS.danger:COLORS.teal} />)}</Field>
           <Field label="Profilaxia LAMG">{s3.map(o => <Pill key={o} label={o} selected={r.lamg===o} onClick={() => set("lamg",o)} />)}</Field>
           <Field label="Úlcera de córnea">{s3.map(o => <Pill key={o} label={o} selected={r.cornea===o} onClick={() => set("cornea",o)} />)}</Field>
@@ -871,7 +874,7 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
           <Field label="Bundles OK?">{s2.map(o => <Pill key={o} label={o} selected={r.bundles===o} onClick={() => set("bundles",o)} color={o==="Não"?COLORS.danger:COLORS.teal} />)}</Field>
         </Grid>
         {r.bundles==="Não" && <Field label="Bundle pendente"><TInput value={r.bundlesPendente} onChange={v => set("bundlesPendente",v)} placeholder="Qual bundle?" /></Field>}
-        <Grid cols={isMobile ? 1 : 2} isMobile={isMobile}>
+        <Grid cols={2} isMobile={isMobile}>
           <Field label="Mudança de decúbito?">{s2.map(o => <Pill key={o} label={o} selected={r.mudancaDecubito===o} onClick={() => set("mudancaDecubito",o)} />)}</Field>
           <div>
             <Field label="Lesão por pressão?">{s2.map(o => <Pill key={o} label={o} selected={r.lesaoPressao===o} onClick={() => set("lesaoPressao",o)} color={o==="Sim"?COLORS.danger:COLORS.teal} />)}</Field>
@@ -899,15 +902,32 @@ function RoundForm({ pat, round, onChange, onBack, isMobile }) {
         </Grid>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
-        <button onClick={onBack} style={{ flex: isMobile ? 1 : "0 0 auto", padding: "12px 24px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 44 }}>Cancelar</button>
-        <button onClick={onBack} style={{ flex: isMobile ? 2 : "0 0 auto", padding: "12px 28px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 44 }}>✓ Salvar Round</button>
+      <div style={{
+        background: saveStatus === "saved" ? COLORS.success + "18"
+                  : saveStatus === "error" ? COLORS.danger + "18"
+                  : COLORS.lightBg,
+        border: `1.5px solid ${saveStatus === "saved" ? COLORS.success : saveStatus === "error" ? COLORS.danger : COLORS.border}`,
+        borderRadius: 12, padding: "12px 16px", marginTop: 4,
+        display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: saveStatus === "saved" ? COLORS.success : saveStatus === "error" ? COLORS.danger : COLORS.muted }}>
+          {saveStatus === "saving" && "💾 Salvando automaticamente..."}
+          {saveStatus === "saved"  && "✓ Salvo com sucesso"}
+          {saveStatus === "error"  && "⚠ Falha ao salvar — verifique sua conexão"}
+          {!saveStatus && "💡 Suas alterações são salvas automaticamente"}
+        </div>
+        <button type="button" onClick={onBack} style={{
+          padding: "10px 24px", borderRadius: 10, border: "none",
+          background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", minHeight: 42,
+        }}>← Voltar ao dashboard</button>
       </div>
     </div>
   );
 }
 
-// ── App ──────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// APP PRINCIPAL — Lógica de salvamento totalmente reescrita
+// ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const isMobile = useIsMobile();
 
@@ -921,47 +941,142 @@ export default function App() {
   const [search,        setSearch]        = useState("");
   const [filter,        setFilter]        = useState("todos");
   const [loading,       setLoading]       = useState(true);
-  const [saveStatus,    setSaveStatus]    = useState(""); // "", "saving", "saved", "error"
+  const [saveStatus,    setSaveStatus]    = useState("");
   const [error,         setError]         = useState(null);
   const [relatorios,    setRelatorios]    = useState([]);
 
-  // Refs para evitar race conditions
-  const pendingRoundRef = useRef({}); // último estado pendente de cada paciente
-  const saveTimeoutRef  = useRef(null);
-  const isSavingRef     = useRef(false);
+  // Refs robustos:
+  // - pendingChanges: mapa de patientId -> dado pendente (sempre sobrescrito pelo mais novo)
+  // - savingPatients: Set de patients sendo salvos agora (evita salvar mesmo paciente em paralelo)
+  // - selectedRef: mantém id atual sincronizado mesmo dentro de funções async
+  const pendingChanges = useRef({});
+  const savingPatients = useRef(new Set());
+  const selectedRef    = useRef(null);
 
-  const dataHoje = hoje();
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  // ── Carregar dados ──
+  // Salva no servidor. Loop até não haver mais alterações pendentes para esse paciente.
+  const saveLoop = useCallback(async (patientId) => {
+    if (savingPatients.current.has(patientId)) return;
+    savingPatients.current.add(patientId);
+
+    try {
+      while (pendingChanges.current[patientId] !== undefined) {
+        const dados = pendingChanges.current[patientId];
+        // Marca como "em processo" mas NÃO remove ainda — só remove se chegar mesmo no servidor
+        delete pendingChanges.current[patientId];
+
+        setSaveStatus("saving");
+
+        let tentativas = 0;
+        let sucesso = false;
+        while (tentativas < 5 && !sucesso) {
+          try {
+            const { error: err } = await supabase.from("rounds").upsert({
+              patient_id: patientId,
+              data: hojeStr(),
+              round_data: dados,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "patient_id,data" });
+            if (err) throw err;
+            sucesso = true;
+          } catch (e) {
+            tentativas++;
+            if (tentativas < 5) await new Promise(r => setTimeout(r, 1000 * tentativas));
+          }
+        }
+
+        if (!sucesso) {
+          // Falhou todas as tentativas — devolve para a fila para tentar de novo depois
+          pendingChanges.current[patientId] = dados;
+          setSaveStatus("error");
+          break;
+        }
+      }
+
+      if (Object.keys(pendingChanges.current).length === 0 && saveStatus !== "error") {
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus(prev => prev === "saved" ? "" : prev), 2000);
+      }
+    } finally {
+      savingPatients.current.delete(patientId);
+    }
+  }, []);
+
+  // Debounce de 400ms — armazena última versão e dispara salvamento
+  const saveTimers = useRef({});
+  const handleChange = useCallback((novoRound) => {
+    const id = selectedRef.current;
+    if (!id) return;
+
+    // Atualiza estado visível imediatamente
+    setRounds(prev => ({ ...prev, [id]: novoRound }));
+
+    // Guarda a versão mais nova pendente
+    pendingChanges.current[id] = novoRound;
+
+    // Reagenda timer
+    if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
+    saveTimers.current[id] = setTimeout(() => {
+      saveLoop(id);
+    }, 400);
+  }, [saveLoop]);
+
+  // Força salvar e voltar ao dashboard
+  const handleBackFromRound = useCallback(async () => {
+    const id = selectedRef.current;
+    if (id && saveTimers.current[id]) {
+      clearTimeout(saveTimers.current[id]);
+      delete saveTimers.current[id];
+    }
+    if (id && pendingChanges.current[id] !== undefined) {
+      await saveLoop(id);
+    }
+    setSelected(null);
+  }, [saveLoop]);
+
+  // Retry automático para falhas — a cada 10s tenta de novo se houver pendência
+  useEffect(() => {
+    const i = setInterval(() => {
+      Object.keys(pendingChanges.current).forEach(idStr => {
+        const id = parseInt(idStr);
+        if (!savingPatients.current.has(id)) saveLoop(id);
+      });
+    }, 10000);
+    return () => clearInterval(i);
+  }, [saveLoop]);
+
+  // Novo round: zera o checklist mas mantém paciente, e salva imediatamente
+  const handleNovoRound = useCallback(async () => {
+    const id = selectedRef.current;
+    if (!id) return;
+    const pat = patients.find(p => p.id === id);
+    const zerado = { ...INITIAL_ROUND, diagnostico: pat?.diagnostico || "" };
+    setRounds(prev => ({ ...prev, [id]: zerado }));
+    pendingChanges.current[id] = zerado;
+    // Cancela timer e salva de imediato
+    if (saveTimers.current[id]) { clearTimeout(saveTimers.current[id]); delete saveTimers.current[id]; }
+    await saveLoop(id);
+  }, [patients, saveLoop]);
+
+  // ── Carregar dados iniciais ──
   useEffect(() => {
     async function load() {
       setLoading(true); setError(null);
       try {
+        const dataHoje = hojeStr();
         const { data: pats, error: e1 } = await supabase.from("patients").select("*").order("id");
         if (e1) throw e1;
         const { data: rds, error: e2 } = await supabase.from("rounds").select("*").eq("data", dataHoje);
         if (e2) throw e2;
 
         setPatients((pats || []).map(p => ({
-          ...p,
-          nome: p.nome || "",
-          diagnostico: p.diagnostico || "",
-          gravidade: p.gravidade || "livre",
-          dataNasc: p.dataNasc || null,
-          dataAdm: p.dataAdm || null,
+          ...p, nome: p.nome || "", diagnostico: p.diagnostico || "",
+          gravidade: p.gravidade || "livre", dataNasc: p.dataNasc || null, dataAdm: p.dataAdm || null,
         })));
 
         const map = {};
-        (rds || []).forEach(r => {
-          const rd = r.round_data || {};
-          if (!rd.dispositivos) rd.dispositivos = INITIAL_DISPOSITIVOS;
-          else {
-            if (!Array.isArray(rd.dispositivos.cvc)) rd.dispositivos.cvc = [];
-            if (!Array.isArray(rd.dispositivos.arterial)) rd.dispositivos.arterial = [];
-            if (!rd.dispositivos.desinvadir) rd.dispositivos.desinvadir = INITIAL_DISPOSITIVOS.desinvadir;
-          }
-          map[r.patient_id] = rd;
-        });
+        (rds || []).forEach(r => { map[r.patient_id] = normalizarRound(r.round_data); });
         setRounds(map);
 
         const seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
@@ -974,15 +1089,16 @@ export default function App() {
       setLoading(false);
     }
     load();
-  }, [dataHoje]);
+  }, []);
 
-  // ── Auto-refresh a cada 30s para sincronizar entre dispositivos ──
+  // Auto-refresh só no dashboard, e respeita pendências
   useEffect(() => {
     if (selected || editingId || showRelatorio || showHistorico) return;
     const i = setInterval(async () => {
-      // Não sincroniza se houver alterações pendentes
-      if (Object.keys(pendingRoundRef.current).length > 0 || isSavingRef.current) return;
+      if (Object.keys(pendingChanges.current).length > 0) return;
+      if (savingPatients.current.size > 0) return;
       try {
+        const dataHoje = hojeStr();
         const { data: pats } = await supabase.from("patients").select("*").order("id");
         const { data: rds }  = await supabase.from("rounds").select("*").eq("data", dataHoje);
         if (pats) setPatients(pats.map(p => ({
@@ -991,91 +1107,15 @@ export default function App() {
         })));
         if (rds) {
           const map = {};
-          rds.forEach(r => {
-            const rd = r.round_data || {};
-            if (!rd.dispositivos) rd.dispositivos = INITIAL_DISPOSITIVOS;
-            else {
-              if (!Array.isArray(rd.dispositivos.cvc)) rd.dispositivos.cvc = [];
-              if (!Array.isArray(rd.dispositivos.arterial)) rd.dispositivos.arterial = [];
-              if (!rd.dispositivos.desinvadir) rd.dispositivos.desinvadir = INITIAL_DISPOSITIVOS.desinvadir;
-            }
-            map[r.patient_id] = rd;
-          });
+          rds.forEach(r => { map[r.patient_id] = normalizarRound(r.round_data); });
           setRounds(map);
         }
       } catch { /* silencioso */ }
     }, 30000);
     return () => clearInterval(i);
-  }, [selected, editingId, showRelatorio, showHistorico, dataHoje]);
+  }, [selected, editingId, showRelatorio, showHistorico]);
 
-  // Salvar com debounce + retry. Sempre envia o estado mais recente.
-  const flushSave = useCallback(async (patientId) => {
-    if (isSavingRef.current) return;
-    const dadosParaSalvar = pendingRoundRef.current[patientId];
-    if (!dadosParaSalvar) return;
-
-    isSavingRef.current = true;
-    setSaveStatus("saving");
-
-    let tentativas = 0;
-    let sucesso = false;
-    while (tentativas < 3 && !sucesso) {
-      try {
-        const { error: err } = await supabase.from("rounds").upsert({
-          patient_id: patientId,
-          data: dataHoje,
-          round_data: dadosParaSalvar,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "patient_id,data" });
-        if (err) throw err;
-        sucesso = true;
-      } catch (e) {
-        tentativas++;
-        if (tentativas < 3) await new Promise(r => setTimeout(r, 800 * tentativas));
-      }
-    }
-
-    isSavingRef.current = false;
-
-    if (sucesso) {
-      // Verifica se houve nova alteração enquanto salvava — se sim, salva de novo
-      if (pendingRoundRef.current[patientId] !== dadosParaSalvar) {
-        flushSave(patientId);
-      } else {
-        delete pendingRoundRef.current[patientId];
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus(""), 1500);
-      }
-    } else {
-      setSaveStatus("error");
-    }
-  }, [dataHoje]);
-
-  const handleChange = useCallback((r) => {
-    // Atualiza estado local imediatamente
-    setRounds(prev => ({ ...prev, [selected]: r }));
-    // Guarda última versão para salvar
-    pendingRoundRef.current[selected] = r;
-
-    // Debounce: cancela timer anterior e agenda novo save em 600ms
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      flushSave(selected);
-    }, 600);
-  }, [selected, flushSave]);
-
-  // Salvar imediatamente ao sair do round (não esperar debounce)
-  const handleBackFromRound = useCallback(async () => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    if (selected && pendingRoundRef.current[selected]) {
-      await flushSave(selected);
-    }
-    setSelected(null);
-  }, [selected, flushSave]);
-
+  // ── Operações pacientes ──
   const savePatient = async (id, data) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p,...data} : p));
     await supabase.from("patients").update({
@@ -1085,18 +1125,24 @@ export default function App() {
     }).eq("id", id);
   };
 
+  // Limpa SÓ rounds de HOJE (não apaga histórico de outros dias)
   const clearPatient = async (id) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"} : p));
     setRounds(prev => { const n={...prev}; delete n[id]; return n; });
+    delete pendingChanges.current[id];
+    if (saveTimers.current[id]) { clearTimeout(saveTimers.current[id]); delete saveTimers.current[id]; }
     await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).eq("id", id);
-    await supabase.from("rounds").delete().eq("patient_id", id);
+    await supabase.from("rounds").delete().eq("patient_id", id).eq("data", hojeStr());
   };
 
   const clearAll = async () => {
     setPatients(prev => prev.map(p => ({...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"})));
     setRounds({}); setShowClearAll(false);
+    pendingChanges.current = {};
+    Object.keys(saveTimers.current).forEach(k => clearTimeout(saveTimers.current[k]));
+    saveTimers.current = {};
     await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).gte("id", 1);
-    await supabase.from("rounds").delete().gte("patient_id", 1);
+    await supabase.from("rounds").delete().eq("data", hojeStr()).gte("patient_id", 1);
   };
 
   const salvarRelatorio = async (tipo, texto) => {
@@ -1131,7 +1177,6 @@ export default function App() {
     return true;
   });
 
-  // ── Loading ─────────
   if (loading) return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif", padding: 20 }}>
       <div style={{ textAlign: "center" }}>
@@ -1147,12 +1192,11 @@ export default function App() {
       <div style={{ textAlign: "center", maxWidth: 400 }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
         <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.danger, marginBottom: 8 }}>{error}</div>
-        <button onClick={() => window.location.reload()} style={{ padding: "11px 22px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Tentar novamente</button>
+        <button type="button" onClick={() => window.location.reload()} style={{ padding: "11px 22px", borderRadius: 10, border: "none", background: COLORS.teal, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Tentar novamente</button>
       </div>
     </div>
   );
 
-  // ── Tela round ─────────
   if (selected && selPat) return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
       <div style={{ background: COLORS.navy, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
@@ -1160,7 +1204,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {saveStatus === "saving" && <span style={{ color: "#FFD54F", fontSize: 11, fontWeight: 600 }}>💾 Salvando...</span>}
           {saveStatus === "saved"  && <span style={{ color: "#7FEFA7", fontSize: 11, fontWeight: 600 }}>✓ Salvo</span>}
-          {saveStatus === "error"  && <span style={{ color: "#FF6B6B", fontSize: 11, fontWeight: 600 }}>⚠ Erro ao salvar</span>}
+          {saveStatus === "error"  && <span style={{ color: "#FF6B6B", fontSize: 11, fontWeight: 600 }}>⚠ Erro</span>}
           <div style={{ color: "#8BBBD9", fontSize: 12 }}>{date}</div>
         </div>
       </div>
@@ -1170,48 +1214,47 @@ export default function App() {
           round={rounds[selected] || { ...INITIAL_ROUND, diagnostico: selPat.diagnostico || "" }}
           onChange={handleChange}
           onBack={handleBackFromRound}
+          onNovoRound={handleNovoRound}
           isMobile={isMobile}
+          saveStatus={saveStatus}
         />
       </div>
     </div>
   );
 
-  // ── Dashboard ──────────
   return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      {/* Top bar */}
       <div style={{ background: COLORS.navy, padding: isMobile ? "10px 14px" : "13px 28px", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: isMobile ? 20 : 22 }}>🏥</span>
             <div>
               <div style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 17 }}>UTI Clínica — IMIP</div>
-              <div style={{ color: "#8BBBD9", fontSize: 11 }}>{isMobile ? date : `Round Multidisciplinar · 10 leitos`}</div>
+              <div style={{ color: "#8BBBD9", fontSize: 11 }}>{isMobile ? date : "Round Multidisciplinar · 10 leitos"}</div>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             {!isMobile && <div style={{ color: "#8BBBD9", fontSize: 13, marginRight: 4 }}>{date}</div>}
-            <button onClick={() => setShowHistorico(true)} style={{
+            <button type="button" onClick={() => setShowHistorico(true)} style={{
               padding: isMobile ? "7px 10px" : "8px 14px", borderRadius: 10,
               border: `1.5px solid #ffffff33`, background: "transparent", color: "#fff",
               fontSize: 12, fontWeight: 600, cursor: "pointer", minHeight: 34,
             }}>🗂 {!isMobile && "Histórico"}</button>
-            <button onClick={() => setShowClearAll(true)} style={{
+            <button type="button" onClick={() => setShowClearAll(true)} style={{
               padding: isMobile ? "7px 10px" : "8px 14px", borderRadius: 10,
               border: `1.5px solid ${COLORS.danger}55`, background: "transparent", color: COLORS.danger,
               fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 34,
             }}>🗑 {!isMobile && "Limpar"}</button>
-            <button onClick={() => setShowRelatorio(true)} style={{
+            <button type="button" onClick={() => setShowRelatorio(true)} style={{
               padding: isMobile ? "7px 12px" : "8px 18px", borderRadius: 10,
               border: "none", background: COLORS.accent, color: "#fff",
               fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 34,
-            }}>📋 {isMobile ? "" : "Relatório"}{isMobile && "Relatório"}</button>
+            }}>📋 Relatório</button>
           </div>
         </div>
       </div>
 
       <div style={{ padding: isMobile ? "14px 14px" : "24px 28px" }}>
-        {/* Stats */}
         <div style={{
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)",
@@ -1235,7 +1278,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* Progress */}
         <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", border: `1px solid ${COLORS.border}`, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.navy }}>Progresso do round</span>
@@ -1246,7 +1288,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Filtros */}
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar paciente ou leito..."
             style={{
@@ -1256,7 +1297,7 @@ export default function App() {
               minHeight: 40, boxSizing: "border-box",
             }} />
           {[["todos","Todos"],["pendente","Pendentes"],["alta","Alta"]].map(([v,l]) => (
-            <button key={v} onClick={() => setFilter(v)} style={{
+            <button type="button" key={v} onClick={() => setFilter(v)} style={{
               padding: "8px 14px", borderRadius: 10,
               border: `1.5px solid ${filter===v?COLORS.teal:COLORS.border}`,
               background: filter===v?COLORS.teal:"#fff",
@@ -1266,7 +1307,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* Grid leitos */}
         <div style={{
           display: "grid",
           gridTemplateColumns: isMobile
@@ -1275,7 +1315,7 @@ export default function App() {
           gap: isMobile ? 10 : 14,
         }}>
           {filtered.length === 0 ? (
-            <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: 40, color: COLORS.muted, fontSize: 14 }}>Nenhum leito encontrado com esse filtro.</div>
+            <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: 40, color: COLORS.muted, fontSize: 14 }}>Nenhum leito encontrado.</div>
           ) : (
             filtered.map(p => <PatientCard key={p.id} pat={p} round={rounds[p.id]} onSelect={setSelected} onEdit={setEditingId} />)
           )}
@@ -1285,7 +1325,13 @@ export default function App() {
       {editingId && editPat && <EditPatientModal pat={editPat} onSave={savePatient} onClear={clearPatient} onClose={() => setEditingId(null)} />}
       {showRelatorio && <RelatorioModal patients={patients} rounds={rounds} onClose={() => setShowRelatorio(false)} onSave={salvarRelatorio} />}
       {showHistorico && <HistoricoModal relatorios={relatorios} onDelete={deletarRelatorio} onClose={() => setShowHistorico(false)} isMobile={isMobile} />}
-      {showClearAll && <ClearAllModal onConfirm={clearAll} onClose={() => setShowClearAll(false)} />}
+      {showClearAll && <ConfirmModal
+        icon="🗑️"
+        title="Limpar todos os pacientes?"
+        message="Todos os pacientes e rounds de hoje serão apagados."
+        confirmLabel="Sim, limpar"
+        onConfirm={clearAll}
+        onClose={() => setShowClearAll(false)} />}
     </div>
   );
 }
