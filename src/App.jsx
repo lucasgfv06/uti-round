@@ -98,12 +98,17 @@ const gravBadge = (g) => ({
   baixa: [COLORS.success, "✓ Baixa"], livre: [COLORS.muted, "Livre"],
 }[g] || [COLORS.muted, g]);
 
-// BUG #6 CORRIGIDO: alerta de TEV agora inclui caso em que tev === null (não preenchido).
 // BUG #11 CORRIGIDO: alerta de dias internado só dispara se dataAdm existir e calcDias for válido.
 function computeAlerts(r, p) {
   const a = [];
   if (!r || !p.nome) return a;
-  if (r.tev === "Não" || r.tev === null) a.push(r.tev === "Não" ? "Sem profilaxia TEV" : "TEV não avaliado");
+  // Verifica se o round foi minimamente preenchido antes de alertar sobre TEV não avaliado
+  const roundIniciado = Object.entries(r).some(([k, v]) =>
+    k !== "diagnostico" && k !== "dispositivos" && v !== null && v !== "" &&
+    !(Array.isArray(v) && v.length === 0)
+  );
+  if (r.tev === "Não") a.push("Sem profilaxia TEV");
+  else if (r.tev === null && roundIniciado) a.push("TEV não avaliado");
   if (r.suporteResp === "VM invasiva" && !(r.planoDesmame?.length)) a.push("VM sem plano de desmame");
   if (r.dva === "Sim" && !r.pam) a.push("DVA sem meta PAM");
   if (r.pendenciaExame === "Sim" && r.descPendencia) a.push(r.descPendencia);
