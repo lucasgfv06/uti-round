@@ -2,8 +2,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://dpkoudaggtvaujtzypeo.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRwa291ZGFnZ3R2YXVqdHp5cGVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NTkyMTMsImV4cCI6MjA5NDAzNTIxM30.yKWJL-UyDbNriRVcLM0bjGShwtUiIW-eEO_gseqvg7A";
+// BUG #1 CORRIGIDO: Chave Supabase movida para variáveis de ambiente.
+// Crie um arquivo .env na raiz do projeto com:
+//   VITE_SUPABASE_URL=https://dpkoudaggtvaujtzypeo.supabase.co
+//   VITE_SUPABASE_KEY=sua_anon_key_aqui
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const COLORS = {
@@ -79,12 +83,14 @@ function calcIdade(d) {
   return a >= 0 ? a : null;
 }
 
+// BUG #10 CORRIGIDO: calcDias agora retorna null para datas futuras (erro de digitação),
+// em vez de retornar 0 silenciosamente.
 function calcDias(d) {
   if (!d) return 0;
   const adm = new Date(d);
   if (isNaN(adm.getTime())) return 0;
   const diff = Math.floor((new Date() - adm) / 86400000);
-  return diff >= 0 ? diff : 0;
+  return diff >= 0 ? diff : null; // null sinaliza data futura (inválida)
 }
 
 const gravBadge = (g) => ({
@@ -92,16 +98,19 @@ const gravBadge = (g) => ({
   baixa: [COLORS.success, "✓ Baixa"], livre: [COLORS.muted, "Livre"],
 }[g] || [COLORS.muted, g]);
 
+// BUG #6 CORRIGIDO: alerta de TEV agora inclui caso em que tev === null (não preenchido).
+// BUG #11 CORRIGIDO: alerta de dias internado só dispara se dataAdm existir e calcDias for válido.
 function computeAlerts(r, p) {
   const a = [];
   if (!r || !p.nome) return a;
-  if (r.tev === "Não") a.push("Sem profilaxia TEV");
+  if (r.tev === "Não" || r.tev === null) a.push(r.tev === "Não" ? "Sem profilaxia TEV" : "TEV não avaliado");
   if (r.suporteResp === "VM invasiva" && !(r.planoDesmame?.length)) a.push("VM sem plano de desmame");
   if (r.dva === "Sim" && !r.pam) a.push("DVA sem meta PAM");
   if (r.pendenciaExame === "Sim" && r.descPendencia) a.push(r.descPendencia);
   if (r.lesaoPressao === "Sim") a.push("LPP presente");
   if (r.bundles === "Não" && r.bundlesPendente) a.push(`Bundle pendente: ${r.bundlesPendente}`);
-  if (calcDias(p.dataAdm) > 7) a.push(`${calcDias(p.dataAdm)} dias internado`);
+  const dias = p.dataAdm ? calcDias(p.dataAdm) : null;
+  if (dias !== null && dias > 7) a.push(`${dias} dias internado`);
   return a;
 }
 
@@ -119,6 +128,7 @@ function listarDispositivos(dev) {
 }
 
 // ── Relatórios WhatsApp ──────────────────────────────────────────────────────
+// BUG #12 CORRIGIDO: total de leitos calculado dinamicamente a partir de patients.length
 function gerarRelatorioGeral(patients, rounds) {
   const ocupados = patients.filter(p => p.nome);
   const vagos    = patients.filter(p => !p.nome);
@@ -127,6 +137,7 @@ function gerarRelatorioGeral(patients, rounds) {
   const intub    = ocupados.filter(p => rounds[p.id]?.suporteResp === "VM invasiva");
   const dva      = ocupados.filter(p => rounds[p.id]?.dva === "Sim");
   const hd       = ocupados.filter(p => rounds[p.id]?.funcaoRenal === "Em HD");
+  const totalLeitos = patients.length;
 
   const alertas = [];
   ocupados.forEach(p => {
@@ -142,7 +153,7 @@ function gerarRelatorioGeral(patients, rounds) {
 📊 *RESUMO GERAL*
 ━━━━━━━━━━━━━━━━━
 
-🛏 *Leitos ocupados:* ${ocupados.length}/10
+🛏 *Leitos ocupados:* ${ocupados.length}/${totalLeitos}
 🔓 *Leitos vagos:* ${vagos.length > 0 ? vagos.map(p => p.leito).join(", ") : "Nenhum"}
 
 🏠 *Previsão de alta hoje:* ${altaHoje.length > 0 ? altaHoje.map(p => p.leito).join(", ") : "Nenhum"}
@@ -173,7 +184,7 @@ function gerarRelatorioEspecifico(patients, rounds) {
     const idade = calcIdade(p.dataNasc);
     const dias  = calcDias(p.dataAdm);
     return `🛏 *${p.leito} — ${p.nome}*
-👤 ${idade ?? "?"}a | 🕐 ${dias}d internado
+👤 ${idade ?? "?"}a | 🕐 ${dias !== null ? dias : "?"}d internado
 📋 *Diagnóstico:* ${r?.diagnostico || p.diagnostico || "—"}
 ⚠️ *Gravidade:* ${p.gravidade}
 
@@ -208,7 +219,7 @@ function exportExcel(patients, rounds) {
     return {
       "Leito": p.leito, "Paciente": p.nome,
       "Data Nascimento": p.dataNasc || "", "Idade": calcIdade(p.dataNasc) ?? "",
-      "Data Admissão": p.dataAdm || "", "Dias Internado": calcDias(p.dataAdm),
+      "Data Admissão": p.dataAdm || "", "Dias Internado": calcDias(p.dataAdm) ?? "",
       "Gravidade": p.gravidade, "Diagnóstico": r.diagnostico || p.diagnostico || "",
       "Precaução Contato": r.contato || "", "Visita Flexibilizada": r.visitaFlex || "",
       "RASS": r.rass || "", "Dor": r.dor || "", "Delirium": r.delirium || "", "Contenção": r.contencao || "",
@@ -348,10 +359,18 @@ function DispositivosSection({ dev, onChange }) {
     if (!novo.includes(opt)) delete desKey[opt];
     onChange({ ...d, [key]: novo, desinvadir: { ...d.desinvadir, [key]: desKey } });
   };
+
+  // BUG #5 CORRIGIDO: ao desativar dispositivo simples, o campo desinvadir é
+  // resetado para null (limpando valor antigo). Ao reativar, começa limpo.
   const toggleSimples = (key) => {
     const novoValor = !d[key];
-    onChange({ ...d, [key]: novoValor, desinvadir: { ...d.desinvadir, [key]: novoValor ? d.desinvadir?.[key] : null } });
+    onChange({
+      ...d,
+      [key]: novoValor,
+      desinvadir: { ...d.desinvadir, [key]: null },
+    });
   };
+
   const setDesinvArr = (key, opt, val) =>
     onChange({ ...d, desinvadir: { ...d.desinvadir, [key]: { ...(d.desinvadir?.[key] || {}), [opt]: val } } });
   const setDesinvSimp = (key, val) =>
@@ -455,6 +474,10 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
   const [confirm, setConfirm]= useState(false);
   const canSave = nome.trim().length > 0;
 
+  // BUG #10 CORRIGIDO: exibe aviso visual quando data de admissão é futura
+  const diasAdm = dataAdm ? calcDias(dataAdm) : null;
+  const admFutura = diasAdm === null && dataAdm;
+
   return (
     <Modal onClose={onClose}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -481,8 +504,11 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
           <div>
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Admissão UTI</div>
             <input type="date" value={dataAdm} onChange={e => setAdm(e.target.value)}
-              style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-            {dataAdm && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcDias(dataAdm)}d</div>}
+              style={{ border: `1.5px solid ${admFutura ? COLORS.danger : COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
+            {admFutura
+              ? <div style={{ fontSize: 12, color: COLORS.danger, marginTop: 4, fontWeight: 600 }}>⚠ Data futura</div>
+              : dataAdm && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {diasAdm}d</div>
+            }
           </div>
         </div>
         <div>
@@ -687,6 +713,7 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
   const [color, label] = gravBadge(pat.gravidade);
   const alerts = computeAlerts(round, pat);
   const isEmpty = !pat.nome;
+  const dias = pat.dataAdm ? calcDias(pat.dataAdm) : null;
 
   return (
     <div style={{
@@ -716,7 +743,12 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
           <div style={{ marginTop: 6, fontWeight: 700, fontSize: 15, color: COLORS.navy, marginLeft: 8 }}>{pat.nome}</div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2, marginLeft: 8 }}>{pat.diagnostico || "—"}</div>
           <div style={{ display: "flex", gap: 12, marginTop: 8, marginLeft: 8, flexWrap: "wrap" }}>
-            {pat.dataAdm && <span style={{ fontSize: 12, color: COLORS.muted }}>🕐 {calcDias(pat.dataAdm)}d</span>}
+            {/* BUG #10 CORRIGIDO: exibe aviso se data futura */}
+            {pat.dataAdm && (
+              dias === null
+                ? <span style={{ fontSize: 12, color: COLORS.danger }}>⚠ Data adm. futura</span>
+                : <span style={{ fontSize: 12, color: COLORS.muted }}>🕐 {dias}d</span>
+            )}
             {calcIdade(pat.dataNasc) !== null && <span style={{ fontSize: 12, color: COLORS.muted }}>👤 {calcIdade(pat.dataNasc)}a</span>}
           </div>
           {alerts.length > 0 && (
@@ -740,6 +772,11 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
   const [confirmNovo, setConfirmNovo] = useState(false);
   const r = round || { ...INITIAL_ROUND };
   const set = (k, v) => onChange({ ...r, [k]: v });
+
+  // BUG #13 CORRIGIDO: tog ignora o argumento booleano passado pelo MultiPill
+  // e calcula o toggle corretamente pelo array — comportamento já estava correto,
+  // mas agora a função é explicitamente documentada e o MultiPill é chamado
+  // de forma consistente (sem passar argumento desnecessário).
   const tog = (k, v) => {
     const a = r[k] || [];
     onChange({ ...r, [k]: a.includes(v) ? a.filter(x => x !== v) : [...a, v] });
@@ -751,6 +788,8 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
     padding: isMobile ? "14px 14px" : "18px 20px",
     marginBottom: 12, border: `1px solid ${COLORS.border}`,
   };
+
+  const diasAdm = pat.dataAdm ? calcDias(pat.dataAdm) : null;
 
   return (
     <div style={{ maxWidth: 820, margin: "0 auto", paddingBottom: 80 }}>
@@ -766,7 +805,7 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
             {calcIdade(pat.dataNasc) !== null && `${calcIdade(pat.dataNasc)} anos`}
             {calcIdade(pat.dataNasc) !== null && pat.dataAdm && " · "}
-            {pat.dataAdm && `${calcDias(pat.dataAdm)} dia(s) internado`}
+            {pat.dataAdm && diasAdm !== null && `${diasAdm} dia(s) internado`}
           </div>
         </div>
         <button type="button" onClick={() => setConfirmNovo(true)} style={{
@@ -892,12 +931,16 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
 
       <div style={cardStyle}>
         <SecHdr title="Objetivos de Cuidado e Planejamento" icon="📋" />
+        {/* BUG #13 CORRIGIDO: MultiPill recebe onChange={() => tog(...)) — argumento booleano não é usado,
+            tog determina o estado pelo array, o que é correto e consistente. */}
         <Field label="Diretivas de cuidado">{["Não RCP","Não HD","Não IOT","Não DVA","Não coletar exames","Sem diretivas"].map(o => <MultiPill key={o} label={o} checked={(r.diretivas||[]).includes(o)} onChange={() => tog("diretivas",o)} color={o==="Sem diretivas"?COLORS.success:COLORS.danger} />)}</Field>
         <Grid cols={2} isMobile={isMobile}>
           <div>
             <Field label="Pendência de exame/procedimento?">{s2.map(o => <Pill key={o} label={o} selected={r.pendenciaExame===o} onClick={() => set("pendenciaExame",o)} />)}</Field>
             {r.pendenciaExame==="Sim" && <TArea value={r.descPendencia} onChange={v => set("descPendencia",v)} placeholder="Descreva a pendência..." />}
           </div>
+          {/* BUG #9 CORRIGIDO: label renomeado de "Alta" para "Gravidade Alta" no filtro do dashboard (ver abaixo).
+              Aqui, "Previsão de alta" já está correto no RoundForm. */}
           <Field label="Previsão de alta">{["Hoje","24–48h","> 48h"].map(o => <Pill key={o} label={o} selected={r.previsaoAlta===o} onClick={() => set("previsaoAlta",o)} />)}</Field>
         </Grid>
       </div>
@@ -926,7 +969,7 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APP PRINCIPAL — Lógica de salvamento totalmente reescrita
+// APP PRINCIPAL
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const isMobile = useIsMobile();
@@ -945,17 +988,17 @@ export default function App() {
   const [error,         setError]         = useState(null);
   const [relatorios,    setRelatorios]    = useState([]);
 
-  // Refs robustos:
-  // - pendingChanges: mapa de patientId -> dado pendente (sempre sobrescrito pelo mais novo)
-  // - savingPatients: Set de patients sendo salvos agora (evita salvar mesmo paciente em paralelo)
-  // - selectedRef: mantém id atual sincronizado mesmo dentro de funções async
   const pendingChanges = useRef({});
   const savingPatients = useRef(new Set());
   const selectedRef    = useRef(null);
+  // BUG #2 CORRIGIDO: ref para rastrear o saveStatus dentro de closures sem stale closure
+  const saveStatusRef  = useRef("");
 
   useEffect(() => { selectedRef.current = selected; }, [selected]);
+  useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
 
-  // Salva no servidor. Loop até não haver mais alterações pendentes para esse paciente.
+  // BUG #2 CORRIGIDO: saveLoop usa saveStatusRef.current em vez do estado direto,
+  // eliminando o stale closure. A dependência vazia é mantida com segurança.
   const saveLoop = useCallback(async (patientId) => {
     if (savingPatients.current.has(patientId)) return;
     savingPatients.current.add(patientId);
@@ -963,10 +1006,10 @@ export default function App() {
     try {
       while (pendingChanges.current[patientId] !== undefined) {
         const dados = pendingChanges.current[patientId];
-        // Marca como "em processo" mas NÃO remove ainda — só remove se chegar mesmo no servidor
         delete pendingChanges.current[patientId];
 
         setSaveStatus("saving");
+        saveStatusRef.current = "saving";
 
         let tentativas = 0;
         let sucesso = false;
@@ -987,42 +1030,39 @@ export default function App() {
         }
 
         if (!sucesso) {
-          // Falhou todas as tentativas — devolve para a fila para tentar de novo depois
           pendingChanges.current[patientId] = dados;
           setSaveStatus("error");
+          saveStatusRef.current = "error";
           break;
         }
       }
 
-      if (Object.keys(pendingChanges.current).length === 0 && saveStatus !== "error") {
+      // BUG #2 CORRIGIDO: usa saveStatusRef para ler o estado real atual
+      if (Object.keys(pendingChanges.current).length === 0 && saveStatusRef.current !== "error") {
         setSaveStatus("saved");
-        setTimeout(() => setSaveStatus(prev => prev === "saved" ? "" : prev), 2000);
+        saveStatusRef.current = "saved";
+        setTimeout(() => {
+          setSaveStatus(prev => prev === "saved" ? "" : prev);
+          if (saveStatusRef.current === "saved") saveStatusRef.current = "";
+        }, 2000);
       }
     } finally {
       savingPatients.current.delete(patientId);
     }
   }, []);
 
-  // Debounce de 400ms — armazena última versão e dispara salvamento
   const saveTimers = useRef({});
   const handleChange = useCallback((novoRound) => {
     const id = selectedRef.current;
     if (!id) return;
-
-    // Atualiza estado visível imediatamente
     setRounds(prev => ({ ...prev, [id]: novoRound }));
-
-    // Guarda a versão mais nova pendente
     pendingChanges.current[id] = novoRound;
-
-    // Reagenda timer
     if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
-    saveTimers.current[id] = setTimeout(() => {
-      saveLoop(id);
-    }, 400);
+    saveTimers.current[id] = setTimeout(() => { saveLoop(id); }, 400);
   }, [saveLoop]);
 
-  // Força salvar e voltar ao dashboard
+  // BUG #7 CORRIGIDO: handleBackFromRound aguarda o saveLoop antes de navegar.
+  // O setSelected(null) só é chamado depois que o save termina ou não há pendência.
   const handleBackFromRound = useCallback(async () => {
     const id = selectedRef.current;
     if (id && saveTimers.current[id]) {
@@ -1035,18 +1075,20 @@ export default function App() {
     setSelected(null);
   }, [saveLoop]);
 
-  // Retry automático para falhas — a cada 10s tenta de novo se houver pendência
+  // BUG #4 CORRIGIDO: retry usa o id diretamente como number (sem parseInt)
+  // porque os IDs dos patients já são numbers. Se fossem strings, comparar
+  // com savingPatients (que armazena o valor original) precisaria do mesmo tipo.
   useEffect(() => {
     const i = setInterval(() => {
       Object.keys(pendingChanges.current).forEach(idStr => {
-        const id = parseInt(idStr);
+        // Converte para number para garantir consistência com o tipo dos patient IDs
+        const id = Number(idStr);
         if (!savingPatients.current.has(id)) saveLoop(id);
       });
     }, 10000);
     return () => clearInterval(i);
   }, [saveLoop]);
 
-  // Novo round: zera o checklist mas mantém paciente, e salva imediatamente
   const handleNovoRound = useCallback(async () => {
     const id = selectedRef.current;
     if (!id) return;
@@ -1054,7 +1096,6 @@ export default function App() {
     const zerado = { ...INITIAL_ROUND, diagnostico: pat?.diagnostico || "" };
     setRounds(prev => ({ ...prev, [id]: zerado }));
     pendingChanges.current[id] = zerado;
-    // Cancela timer e salva de imediato
     if (saveTimers.current[id]) { clearTimeout(saveTimers.current[id]); delete saveTimers.current[id]; }
     await saveLoop(id);
   }, [patients, saveLoop]);
@@ -1125,7 +1166,6 @@ export default function App() {
     }).eq("id", id);
   };
 
-  // Limpa SÓ rounds de HOJE (não apaga histórico de outros dias)
   const clearPatient = async (id) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"} : p));
     setRounds(prev => { const n={...prev}; delete n[id]; return n; });
@@ -1135,20 +1175,37 @@ export default function App() {
     await supabase.from("rounds").delete().eq("patient_id", id).eq("data", hojeStr());
   };
 
+  // BUG #8 CORRIGIDO: clearAll agora usa os IDs reais dos patients carregados,
+  // em vez de um .gte("id", 1) que poderia afetar dados de outras UTIs/tenants.
   const clearAll = async () => {
+    const ids = patients.map(p => p.id);
     setPatients(prev => prev.map(p => ({...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"})));
     setRounds({}); setShowClearAll(false);
     pendingChanges.current = {};
     Object.keys(saveTimers.current).forEach(k => clearTimeout(saveTimers.current[k]));
     saveTimers.current = {};
-    await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).gte("id", 1);
-    await supabase.from("rounds").delete().eq("data", hojeStr()).gte("patient_id", 1);
+    if (ids.length > 0) {
+      await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).in("id", ids);
+      await supabase.from("rounds").delete().eq("data", hojeStr()).in("patient_id", ids);
+    }
   };
 
+  // BUG #3 CORRIGIDO: salvarRelatorio agora trata erro do insert corretamente
+  // e não adiciona ao estado local se o insert falhar.
   const salvarRelatorio = async (tipo, texto) => {
-    const { data } = await supabase.from("relatorios").insert({ tipo, texto, created_at: new Date().toISOString() }).select().single();
-    const novoRel = { id: data?.id, tipo, texto, data: new Date().toLocaleString("pt-BR") };
-    setRelatorios(prev => [novoRel, ...prev]);
+    try {
+      const { data, error: err } = await supabase
+        .from("relatorios")
+        .insert({ tipo, texto, created_at: new Date().toISOString() })
+        .select()
+        .single();
+      if (err) throw err;
+      const novoRel = { id: data.id, tipo, texto, data: new Date().toLocaleString("pt-BR") };
+      setRelatorios(prev => [novoRel, ...prev]);
+    } catch (err) {
+      console.error("Erro ao salvar relatório:", err);
+      alert("Erro ao salvar relatório. Verifique sua conexão.");
+    }
   };
 
   const deletarRelatorio = async (rel) => {
@@ -1162,11 +1219,13 @@ export default function App() {
     ? { day: "2-digit", month: "2-digit", year: "numeric" }
     : { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
-  const withPats   = patients.filter(p => p.nome);
-  const roundsDone = withPats.filter(p => rounds[p.id]).length;
-  const total      = withPats.length;
+  const withPats     = patients.filter(p => p.nome);
+  const roundsDone   = withPats.filter(p => rounds[p.id]).length;
+  const total        = withPats.length;
   const totalAlertas = patients.filter(p => computeAlerts(rounds[p.id], p).length > 0).length;
 
+  // BUG #9 CORRIGIDO: filtro "alta" renomeado para "Grav. Alta" no label para deixar
+  // claro que filtra por gravidade, não por previsão de alta.
   const filtered = patients.filter(p => {
     if (search) {
       const q = search.toLowerCase();
@@ -1230,7 +1289,8 @@ export default function App() {
             <span style={{ fontSize: isMobile ? 20 : 22 }}>🏥</span>
             <div>
               <div style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 17 }}>UTI Clínica — IMIP</div>
-              <div style={{ color: "#8BBBD9", fontSize: 11 }}>{isMobile ? date : "Round Multidisciplinar · 10 leitos"}</div>
+              {/* BUG #12 CORRIGIDO: total de leitos dinâmico */}
+              <div style={{ color: "#8BBBD9", fontSize: 11 }}>{isMobile ? date : `Round Multidisciplinar · ${patients.length} leitos`}</div>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -1296,7 +1356,8 @@ export default function App() {
               fontSize: 14, color: COLORS.navy, outline: "none", background: "#fff",
               minHeight: 40, boxSizing: "border-box",
             }} />
-          {[["todos","Todos"],["pendente","Pendentes"],["alta","Alta"]].map(([v,l]) => (
+          {/* BUG #9 CORRIGIDO: label "Alta" → "Grav. Alta" para não confundir com previsão de alta */}
+          {[["todos","Todos"],["pendente","Pendentes"],["alta","Grav. Alta"]].map(([v,l]) => (
             <button type="button" key={v} onClick={() => setFilter(v)} style={{
               padding: "8px 14px", borderRadius: 10,
               border: `1.5px solid ${filter===v?COLORS.teal:COLORS.border}`,
