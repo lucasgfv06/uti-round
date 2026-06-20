@@ -139,10 +139,14 @@ function gerarRelatorioGeral(patients, rounds) {
   const hd       = ocupados.filter(p => rounds[p.id]?.funcaoRenal === "Em HD");
   const totalLeitos = patients.length;
 
-  const alertas = [];
-  ocupados.forEach(p => {
-    computeAlerts(rounds[p.id], p).forEach(a => alertas.push(`⚠️ ${p.leito} — ${a}`));
-  });
+  // Alertas agrupados por leito
+  const alertasPorLeito = ocupados
+    .map(p => ({ leito: p.leito, items: computeAlerts(rounds[p.id], p) }))
+    .filter(g => g.items.length > 0);
+
+  const alertasTexto = alertasPorLeito.length > 0
+    ? alertasPorLeito.map(g => `🛏 *${g.leito}*\n${g.items.map(a => `  ⚠️ ${a}`).join("\n")}`).join("\n\n")
+    : "✅ Sem alertas no momento";
 
   const dt = new Date().toLocaleDateString("pt-BR") + " — " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
@@ -166,7 +170,7 @@ function gerarRelatorioGeral(patients, rounds) {
 🚨 *ALERTAS E PENDÊNCIAS*
 ━━━━━━━━━━━━━━━━━
 
-${alertas.length > 0 ? alertas.join("\n") : "✅ Sem alertas no momento"}
+${alertasTexto}
 
 ━━━━━━━━━━━━━━━━━
 📊 _Gerado pelo UTI Round — IMIP_`;
