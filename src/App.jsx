@@ -190,10 +190,9 @@ function gerarRelatorioEspecifico(patients, rounds) {
 
   const blocos = ocupados.map(p => {
     const r = rounds[p.id];
-    const idade = calcIdade(p.dataNasc);
     const dias  = calcDias(p.dataAdm);
     return `🛏 *${p.leito} — ${p.nome}*
-👤 ${idade ?? "?"}a | 🕐 ${dias !== null ? dias : "?"}d internado
+👤 ${p.idade ?? "?"}a | 🕐 ${dias !== null ? dias : "?"}d internado
 📋 *Diagnóstico:* ${r?.diagnostico || p.diagnostico || "—"}
 ⚠️ *Gravidade:* ${p.gravidade}
 
@@ -227,7 +226,7 @@ function exportExcel(patients, rounds) {
     const dev = r.dispositivos || INITIAL_DISPOSITIVOS;
     return {
       "Leito": p.leito, "Paciente": p.nome,
-      "Data Nascimento": p.dataNasc || "", "Idade": calcIdade(p.dataNasc) ?? "",
+      "Idade": p.idade ?? "",
       "Data Admissão": p.dataAdm || "", "Dias Internado": calcDias(p.dataAdm) ?? "",
       "Gravidade": p.gravidade, "Diagnóstico": r.diagnostico || p.diagnostico || "",
       "Precaução Contato": r.contato || "", "Visita Flexibilizada": r.visitaFlex || "",
@@ -476,7 +475,7 @@ function DispositivosSection({ dev, onChange }) {
 // ── Modais ───────────────────────────────────────────────────────────────────
 function EditPatientModal({ pat, onSave, onClear, onClose }) {
   const [nome,    setNome]    = useState(pat.nome || "");
-  const [dataNasc,setNasc]   = useState(pat.dataNasc || "");
+  const [idade,   setIdade]   = useState(pat.idade != null ? String(pat.idade) : "");
   const [dataAdm, setAdm]    = useState(pat.dataAdm || "");
   const [diag,    setDiag]   = useState(pat.diagnostico || "");
   const [grav,    setGrav]   = useState(pat.gravidade || "livre");
@@ -505,10 +504,9 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
-            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Nascimento</div>
-            <input type="date" value={dataNasc} onChange={e => setNasc(e.target.value)}
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Idade (anos)</div>
+            <input type="number" min="0" max="130" value={idade} onChange={e => setIdade(e.target.value)} placeholder="Ex: 65"
               style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, color: COLORS.navy, outline: "none", width: "100%", background: "#fff", boxSizing: "border-box" }} />
-            {calcIdade(dataNasc) !== null && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 4, fontWeight: 600 }}>→ {calcIdade(dataNasc)} anos</div>}
           </div>
           <div>
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, marginBottom: 5, textTransform: "uppercase" }}>Admissão UTI</div>
@@ -562,7 +560,7 @@ function EditPatientModal({ pat, onSave, onClear, onClose }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
         <button type="button" onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.navy, fontSize: 14, fontWeight: 600, cursor: "pointer", minHeight: 42 }}>Cancelar</button>
-        <button type="button" onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), dataNasc, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
+        <button type="button" onClick={() => { if (canSave) { onSave(pat.id, { nome: nome.trim(), idade: idade !== "" ? Number(idade) : null, dataAdm, diagnostico: diag, gravidade: grav }); onClose(); }}}
           style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: canSave ? COLORS.teal : COLORS.border, color: "#fff", fontSize: 14, fontWeight: 700, cursor: canSave ? "pointer" : "not-allowed", minHeight: 42 }}>✓ Salvar</button>
       </div>
     </Modal>
@@ -758,7 +756,7 @@ function PatientCard({ pat, round, onSelect, onEdit }) {
                 ? <span style={{ fontSize: 12, color: COLORS.danger }}>⚠ Data adm. futura</span>
                 : <span style={{ fontSize: 12, color: COLORS.muted }}>🕐 {dias}d</span>
             )}
-            {calcIdade(pat.dataNasc) !== null && <span style={{ fontSize: 12, color: COLORS.muted }}>👤 {calcIdade(pat.dataNasc)}a</span>}
+            {pat.idade != null && <span style={{ fontSize: 12, color: COLORS.muted }}>👤 {pat.idade}a</span>}
           </div>
           {alerts.length > 0 && (
             <div style={{ marginTop: 8, marginLeft: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -812,8 +810,8 @@ function RoundForm({ pat, round, onChange, onBack, onNovoRound, isMobile, saveSt
           <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase" }}>{pat.leito} · Round — {new Date().toLocaleDateString("pt-BR")}</div>
           <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: COLORS.navy }}>{pat.nome}</div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
-            {calcIdade(pat.dataNasc) !== null && `${calcIdade(pat.dataNasc)} anos`}
-            {calcIdade(pat.dataNasc) !== null && pat.dataAdm && " · "}
+            {pat.idade != null && `${pat.idade} anos`}
+            {pat.idade != null && pat.dataAdm && " · "}
             {pat.dataAdm && diasAdm !== null && `${diasAdm} dia(s) internado`}
           </div>
         </div>
@@ -1122,7 +1120,7 @@ export default function App() {
 
         setPatients((pats || []).map(p => ({
           ...p, nome: p.nome || "", diagnostico: p.diagnostico || "",
-          gravidade: p.gravidade || "livre", dataNasc: p.dataNasc || null, dataAdm: p.dataAdm || null,
+          gravidade: p.gravidade || "livre", idade: p.idade ?? null, dataAdm: p.dataAdm || null,
         })));
 
         const map = {};
@@ -1153,7 +1151,7 @@ export default function App() {
         const { data: rds }  = await supabase.from("rounds").select("*").eq("data", dataHoje);
         if (pats) setPatients(pats.map(p => ({
           ...p, nome: p.nome||"", diagnostico: p.diagnostico||"",
-          gravidade: p.gravidade||"livre", dataNasc: p.dataNasc||null, dataAdm: p.dataAdm||null,
+          gravidade: p.gravidade||"livre", idade: p.idade ?? null, dataAdm: p.dataAdm||null,
         })));
         if (rds) {
           const map = {};
@@ -1169,18 +1167,18 @@ export default function App() {
   const savePatient = async (id, data) => {
     setPatients(prev => prev.map(p => p.id===id ? {...p,...data} : p));
     await supabase.from("patients").update({
-      nome: data.nome, dataNasc: data.dataNasc||null, dataAdm: data.dataAdm||null,
+      nome: data.nome, idade: data.idade ?? null, dataAdm: data.dataAdm||null,
       diagnostico: data.diagnostico, gravidade: data.gravidade,
       updated_at: new Date().toISOString(),
     }).eq("id", id);
   };
 
   const clearPatient = async (id) => {
-    setPatients(prev => prev.map(p => p.id===id ? {...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"} : p));
+    setPatients(prev => prev.map(p => p.id===id ? {...p, nome:"", idade:null, dataAdm:null, diagnostico:"", gravidade:"livre"} : p));
     setRounds(prev => { const n={...prev}; delete n[id]; return n; });
     delete pendingChanges.current[id];
     if (saveTimers.current[id]) { clearTimeout(saveTimers.current[id]); delete saveTimers.current[id]; }
-    await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).eq("id", id);
+    await supabase.from("patients").update({ nome:"", idade:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).eq("id", id);
     await supabase.from("rounds").delete().eq("patient_id", id).eq("data", hojeStr());
   };
 
@@ -1188,13 +1186,13 @@ export default function App() {
   // em vez de um .gte("id", 1) que poderia afetar dados de outras UTIs/tenants.
   const clearAll = async () => {
     const ids = patients.map(p => p.id);
-    setPatients(prev => prev.map(p => ({...p, nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre"})));
+    setPatients(prev => prev.map(p => ({...p, nome:"", idade:null, dataAdm:null, diagnostico:"", gravidade:"livre"})));
     setRounds({}); setShowClearAll(false);
     pendingChanges.current = {};
     Object.keys(saveTimers.current).forEach(k => clearTimeout(saveTimers.current[k]));
     saveTimers.current = {};
     if (ids.length > 0) {
-      await supabase.from("patients").update({ nome:"", dataNasc:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).in("id", ids);
+      await supabase.from("patients").update({ nome:"", idade:null, dataAdm:null, diagnostico:"", gravidade:"livre" }).in("id", ids);
       await supabase.from("rounds").delete().eq("data", hojeStr()).in("patient_id", ids);
     }
   };
