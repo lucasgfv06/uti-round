@@ -116,6 +116,17 @@ function computeAlerts(r, p) {
   if (r.bundles === "Não" && r.bundlesPendente) a.push(`Bundle pendente: ${r.bundlesPendente}`);
   const dias = p.dataAdm ? calcDias(p.dataAdm) : null;
   if (dias !== null && dias > 7) a.push(`${dias} dias internado`);
+  // Dispositivos marcados para desinvasão
+  const dev = r.dispositivos?.desinvadir;
+  if (dev) {
+    Object.entries(dev.cvc || {}).forEach(([opt, val]) => { if (val === "Sim") a.push(`Retirar CVC ${opt}`); });
+    Object.entries(dev.arterial || {}).forEach(([opt, val]) => { if (val === "Sim") a.push(`Retirar Art ${opt}`); });
+    if (dev.hd     === "Sim") a.push("Retirar cateter HD");
+    if (dev.svd    === "Sim") a.push("Retirar SVD");
+    if (dev.sne    === "Sim") a.push("Retirar SNE");
+    if (dev.sng    === "Sim") a.push("Retirar SNG");
+    if (dev.drenos === "Sim") a.push("Retirar drenos");
+  }
   return a;
 }
 
@@ -135,13 +146,16 @@ function listarDispositivos(dev) {
 // ── Relatórios WhatsApp ──────────────────────────────────────────────────────
 // BUG #12 CORRIGIDO: total de leitos calculado dinamicamente a partir de patients.length
 function gerarRelatorioGeral(patients, rounds) {
-  const ocupados = patients.filter(p => p.nome);
-  const vagos    = patients.filter(p => !p.nome);
-  const altaHoje = ocupados.filter(p => rounds[p.id]?.previsaoAlta === "Hoje");
-  const graves   = ocupados.filter(p => p.gravidade === "alta");
-  const intub    = ocupados.filter(p => rounds[p.id]?.suporteResp === "VM invasiva");
-  const dva      = ocupados.filter(p => rounds[p.id]?.dva === "Sim");
-  const hd       = ocupados.filter(p => rounds[p.id]?.funcaoRenal === "Em HD");
+  const ocupados        = patients.filter(p => p.nome);
+  const vagos           = patients.filter(p => !p.nome);
+  const altaHoje        = ocupados.filter(p => rounds[p.id]?.previsaoAlta === "Hoje");
+  const graves          = ocupados.filter(p => p.gravidade === "alta");
+  const intub           = ocupados.filter(p => rounds[p.id]?.suporteResp === "VM invasiva");
+  const dva             = ocupados.filter(p => rounds[p.id]?.dva === "Sim");
+  const hd              = ocupados.filter(p => rounds[p.id]?.funcaoRenal === "Em HD");
+  const contato         = ocupados.filter(p => rounds[p.id]?.contato === "Sim");
+  const visitaFlex      = ocupados.filter(p => rounds[p.id]?.visitaFlex === "Sim");
+  const broncoaspiracao = ocupados.filter(p => rounds[p.id]?.preocResp?.includes("Risco de broncoaspiração"));
   const totalLeitos = patients.length;
 
   // Alertas agrupados por leito
@@ -170,6 +184,9 @@ function gerarRelatorioGeral(patients, rounds) {
 🫁 *Intubados (VMI):* ${intub.length > 0 ? intub.map(p => p.leito).join(", ") : "Nenhum"}
 💊 *Em DVA:* ${dva.length > 0 ? dva.map(p => p.leito).join(", ") : "Nenhum"}
 🩸 *Em HD:* ${hd.length > 0 ? hd.map(p => p.leito).join(", ") : "Nenhum"}
+🧤 *Precaução de contato:* ${contato.length > 0 ? contato.map(p => p.leito).join(", ") : "Nenhum"}
+👨‍👩‍👧 *Visita flexibilizada:* ${visitaFlex.length > 0 ? visitaFlex.map(p => p.leito).join(", ") : "Nenhum"}
+🫧 *Risco de broncoaspiração:* ${broncoaspiracao.length > 0 ? broncoaspiracao.map(p => p.leito).join(", ") : "Nenhum"}
 
 ━━━━━━━━━━━━━━━━━
 🚨 *ALERTAS E PENDÊNCIAS*
